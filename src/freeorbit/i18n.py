@@ -1,4 +1,9 @@
-"""界面中英文字符串（运行时切换）。"""
+"""界面中英文字符串（运行时切换）。
+
+文案均内嵌于本模块，无外部语言文件；Nuitka 打包后仍从字节码加载。
+语言偏好通过 QSettings 持久化，与可执行文件路径、onefile 解压目录无关
+（由 QApplication 的 organizationName / applicationName 决定存储位置）。
+"""
 
 from __future__ import annotations
 

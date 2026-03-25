@@ -63,7 +63,8 @@ class MainWindow(QMainWindow):
         self._bookmark_dock.setMaximumWidth(260)
         self._search_dock.setMaximumWidth(300)
         self._struct_dock.setMaximumWidth(300)
-        self._script_dock.setMaximumHeight(480)
+        # 底部脚本区默认占用略少，用户仍可拖曳边缘拉大
+        self._script_dock.setMaximumHeight(300)
 
         self._compare_window: Optional[CompareWindow] = None
 
