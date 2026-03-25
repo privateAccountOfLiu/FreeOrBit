@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FreeOrBit 脚本 API 参考</title>
+  <style>
+    :root {
+      --bg: #1a1d23;
+      --panel: #242830;
+      --text: #e6e8ec;
+      --muted: #9aa3b2;
+      --accent: #6eb5ff;
+      --border: #3d4454;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+      line-height: 1.6;
+      margin: 0;
+      padding: 2rem 1.5rem 3rem;
+      background: var(--bg);
+      color: var(--text);
+      max-width: 52rem;
+      margin-left: auto;
+      margin-right: auto;
+    }
+    h1 { font-size: 1.75rem; font-weight: 600; margin-top: 0; }
+    h2 { font-size: 1.2rem; margin-top: 2rem; border-bottom: 1px solid var(--border); padding-bottom: 0.35rem; }
+    h3 { font-size: 1rem; margin-top: 1.25rem; color: var(--accent); }
+    p, li { color: var(--text); }
+    .muted { color: var(--muted); font-size: 0.95rem; }
+    code, pre {
+      font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+      font-size: 0.9em;
+    }
+    code {
+      background: var(--panel);
+      padding: 0.15em 0.4em;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+    }
+    pre {
+      background: var(--panel);
+      padding: 1rem;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      overflow-x: auto;
+      line-height: 1.45;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.95rem;
+    }
+    th, td {
+      text-align: left;
+      padding: 0.5rem 0.75rem;
+      border: 1px solid var(--border);
+    }
+    th { background: var(--panel); }
+    .note {
+      background: var(--panel);
+      border-left: 4px solid var(--accent);
+      padding: 0.75rem 1rem;
+      margin: 1rem 0;
+      border-radius: 0 8px 8px 0;
+    }
+    ul.builtins {
+      columns: 3;
+      column-gap: 1.5rem;
+      margin: 0.5rem 0;
+      padding-left: 1.25rem;
+    }
+    @media (max-width: 40rem) {
+      ul.builtins { columns: 2; }
+    }
+  </style>
+</head>
+<body>
+  <h1>FreeOrBit 脚本 API 参考</h1>
+  <p class="muted">本文档描述「脚本」面板中用户 Python 代码可见的全局环境与 <code>editor</code> 对象。实现以源码 <code>src/freeorbit/script/editor_api.py</code> 为准；若与策划文档或其他材料不一致，以本页与源码为准。</p>
+
+  <h2>概述</h2>
+  <p>脚本由程序使用 <code>exec(code, globals, globals)</code> 执行，全局字典由 <code>make_script_globals</code> 构造。用户可用的顶层名称包括：</p>
+  <ul>
+    <li><strong><code>editor</code></strong>：当前活动文档的 <code>EditorAPI</code> 实例。</li>
+    <li><strong><code>print</code></strong>：重定向到内部日志（与 <code>editor.message</code> 类似），输出在面板「输出」区域通过 <code>log_text()</code> 汇总显示。</li>
+    <li><strong><code>__builtins__</code></strong>：受限的内置名集合（见下文），并非完整 Python 内置环境。</li>
+  </ul>
+
+  <h2><code>editor</code>（<code>EditorAPI</code>）</h2>
+  <p>类型：<code>EditorAPI</code>，绑定到当前标签页对应的 <code>DocumentEditor</code>。</p>
+  <table>
+    <thead>
+      <tr><th>方法</th><th>说明</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>read(offset: int, size: int) -&gt; bytes</code></td>
+        <td>从当前二进制模型读取从 <code>offset</code> 开始的 <code>size</code> 个字节。</td>
+      </tr>
+      <tr>
+        <td><code>write(offset: int, data: bytes) -&gt; None</code></td>
+        <td>将 <code>data</code> 写入从 <code>offset</code> 起的区域。会先调用模型的 <code>ensure_mutable_copy()</code>，再 <code>replace_range</code>。</td>
+      </tr>
+      <tr>
+        <td><code>cursor() -&gt; int</code></td>
+        <td>当前光标字节偏移（十六进制视图）。</td>
+      </tr>
+      <tr>
+        <td><code>set_cursor(offset: int) -&gt; None</code></td>
+        <td>将光标设到 <code>offset</code>，半字节偏移为 0。</td>
+      </tr>
+      <tr>
+        <td><code>message(text: str) -&gt; None</code></td>
+        <td>向脚本日志追加一行文本（字符串形式）。</td>
+      </tr>
+      <tr>
+        <td><code>log_text() -&gt; str</code></td>
+        <td>返回当前脚本运行累积的日志，多行以换行符连接。</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>全局 <code>print</code></h2>
+  <p>脚本中的 <code>print</code> 被替换为自定义函数，将内容写入与 <code>editor.message</code> 相同的内部行缓冲：</p>
+  <ul>
+    <li>无关键字参数时：各参数以空格连接成一行追加。</li>
+    <li>存在关键字参数时：行为为在参数字符串后附加 <code>repr(kwargs)</code>（用于提示不支持标准 <code>print</code> 的关键字参数）。</li>
+  </ul>
+
+  <h2>允许的 <code>__builtins__</code></h2>
+  <p>以下为允许使用的内置名（与实现中 <code>_ALLOWED_BUILTINS</code> 一致）：</p>
+  <ul class="builtins">
+    <li><code>abs</code></li>
+    <li><code>all</code></li>
+    <li><code>any</code></li>
+    <li><code>bin</code></li>
+    <li><code>bool</code></li>
+    <li><code>bytes</code></li>
+    <li><code>chr</code></li>
+    <li><code>dict</code></li>
+    <li><code>enumerate</code></li>
+    <li><code>filter</code></li>
+    <li><code>float</code></li>
+    <li><code>format</code></li>
+    <li><code>frozenset</code></li>
+    <li><code>hash</code></li>
+    <li><code>hex</code></li>
+    <li><code>int</code></li>
+    <li><code>isinstance</code></li>
+    <li><code>issubclass</code></li>
+    <li><code>iter</code></li>
+    <li><code>len</code></li>
+    <li><code>list</code></li>
+    <li><code>map</code></li>
+    <li><code>max</code></li>
+    <li><code>min</code></li>
+    <li><code>next</code></li>
+    <li><code>oct</code></li>
+    <li><code>ord</code></li>
+    <li><code>pow</code></li>
+    <li><code>range</code></li>
+    <li><code>repr</code></li>
+    <li><code>reversed</code></li>
+    <li><code>round</code></li>
+    <li><code>set</code></li>
+    <li><code>slice</code></li>
+    <li><code>sorted</code></li>
+    <li><code>str</code></li>
+    <li><code>sum</code></li>
+    <li><code>tuple</code></li>
+    <li><code>zip</code></li>
+  </ul>
+  <p class="muted">未列入的名称（如 <code>open</code>、<code>input</code>、<code>eval</code> 等）在脚本中不可用。</p>
+
+  <h2>示例</h2>
+  <pre><code># 读取开头 16 字节并在输出中显示十六进制表示
+data = editor.read(0, 16)
+editor.message(hex(data))</code></pre>
+  <p class="muted">与程序内脚本面板占位提示一致。也可使用 <code>print(hex(data))</code>，输出同样进入「输出」区域。</p>
+
+  <div class="note">
+    <strong>版本</strong>：文档与 FreeOrBit 源码同步维护；API 如有变更，请以 <code>editor_api.py</code> 为准。
+  </div>
+</body>
+</html>

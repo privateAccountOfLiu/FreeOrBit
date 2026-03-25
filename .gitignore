@@ -1,0 +1,16 @@
+# IDE
+.idea/
+
+# 构建产物
+/build/
+
+# Nuitka 崩溃报告（若生成）
+/nuitka-crash-report.xml
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# 虚拟环境
+.venv/
