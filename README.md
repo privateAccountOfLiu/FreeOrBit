@@ -1,5 +1,7 @@
 # FreeOrBit ———— 一款免费开源的Hex Editor（16进制编辑器）
 
+![FreeOrBit MainWindow](https://blog.privateliu.cn/media/uploads/20260325_903d5f1c7d44485fbbfabbbc51de4079.png)
+
 基于 PySide6 的十六进制 / 二进制编辑器（开发中）。
 
 ## 运行要求
