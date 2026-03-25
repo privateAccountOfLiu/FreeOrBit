@@ -17,6 +17,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from freeorbit.dialogs.settings_dialog import SettingsDialog
+from freeorbit.i18n import tr
 from freeorbit.services.bookmarks import BookmarkPanel
 from freeorbit.services.checksum_dialog import ChecksumDialog
 from freeorbit.services.compare_view import CompareWindow
@@ -29,7 +31,6 @@ from freeorbit.viewmodel.document_editor import DocumentEditor
 class MainWindow(QMainWindow):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("FreeOrBit")
         self.resize(1100, 700)
 
         self._tabs = QTabWidget(self)
@@ -67,123 +68,188 @@ class MainWindow(QMainWindow):
         self._compare_window: Optional[CompareWindow] = None
 
         self._create_menus()
+        self.retranslate_ui()
         self._new_tab()
 
     def _create_menus(self) -> None:
-        file_menu = self.menuBar().addMenu("文件(&F)")
-        act_new = QAction("新建(&N)", self)
-        act_new.setShortcut(QKeySequence.New)
-        act_new.triggered.connect(self._new_tab)
-        file_menu.addAction(act_new)
+        mb = self.menuBar()
+        self._menu_file = mb.addMenu("")
+        self._act_new = QAction(self)
+        self._act_new.setShortcut(QKeySequence.New)
+        self._act_new.triggered.connect(self._new_tab)
+        self._menu_file.addAction(self._act_new)
 
-        act_open = QAction("打开(&O)...", self)
-        act_open.setShortcut(QKeySequence.Open)
-        act_open.triggered.connect(self._open_file)
-        file_menu.addAction(act_open)
+        self._act_open = QAction(self)
+        self._act_open.setShortcut(QKeySequence.Open)
+        self._act_open.triggered.connect(self._open_file)
+        self._menu_file.addAction(self._act_open)
 
-        act_save = QAction("保存(&S)", self)
-        act_save.setShortcut(QKeySequence.Save)
-        act_save.triggered.connect(self._save_file)
-        file_menu.addAction(act_save)
+        self._act_save = QAction(self)
+        self._act_save.setShortcut(QKeySequence.Save)
+        self._act_save.triggered.connect(self._save_file)
+        self._menu_file.addAction(self._act_save)
 
-        act_save_as = QAction("另存为(&A)...", self)
-        act_save_as.setShortcut(QKeySequence.SaveAs)
-        act_save_as.triggered.connect(self._save_file_as)
-        file_menu.addAction(act_save_as)
+        self._act_save_as = QAction(self)
+        self._act_save_as.setShortcut(QKeySequence.SaveAs)
+        self._act_save_as.triggered.connect(self._save_file_as)
+        self._menu_file.addAction(self._act_save_as)
 
-        file_menu.addSeparator()
-        act_exit = QAction("退出(&X)", self)
-        act_exit.triggered.connect(self.close)
-        file_menu.addAction(act_exit)
+        self._menu_file.addSeparator()
+        self._act_exit = QAction(self)
+        self._act_exit.triggered.connect(self.close)
+        self._menu_file.addAction(self._act_exit)
 
-        edit_menu = self.menuBar().addMenu("编辑(&E)")
-        act_undo = QAction("撤销(&U)", self)
-        act_undo.setShortcut(QKeySequence.Undo)
-        act_undo.triggered.connect(self._undo)
-        edit_menu.addAction(act_undo)
+        self._menu_edit = mb.addMenu("")
+        self._act_undo = QAction(self)
+        self._act_undo.setShortcut(QKeySequence.Undo)
+        self._act_undo.triggered.connect(self._undo)
+        self._menu_edit.addAction(self._act_undo)
 
-        act_redo = QAction("重做(&R)", self)
-        act_redo.setShortcut(QKeySequence.Redo)
-        act_redo.triggered.connect(self._redo)
-        edit_menu.addAction(act_redo)
+        self._act_redo = QAction(self)
+        self._act_redo.setShortcut(QKeySequence.Redo)
+        self._act_redo.triggered.connect(self._redo)
+        self._menu_edit.addAction(self._act_redo)
 
-        tools_menu = self.menuBar().addMenu("工具(&T)")
-        act_search = QAction("搜索(&S)...", self)
-        act_search.setShortcut(QKeySequence.Find)
-        act_search.triggered.connect(self._search_dock.show_and_focus)
-        tools_menu.addAction(act_search)
+        self._menu_tools = mb.addMenu("")
+        self._act_search = QAction(self)
+        self._act_search.setShortcut(QKeySequence.Find)
+        self._act_search.triggered.connect(self._search_dock.show_and_focus)
+        self._menu_tools.addAction(self._act_search)
 
-        act_checksum = QAction("校验和/哈希(&C)...", self)
-        act_checksum.triggered.connect(self._open_checksum)
-        tools_menu.addAction(act_checksum)
+        self._act_checksum = QAction(self)
+        self._act_checksum.triggered.connect(self._open_checksum)
+        self._menu_tools.addAction(self._act_checksum)
 
-        act_compare = QAction("比较文件(&M)...", self)
-        act_compare.triggered.connect(self._open_compare)
-        tools_menu.addAction(act_compare)
+        self._act_compare = QAction(self)
+        self._act_compare.triggered.connect(self._open_compare)
+        self._menu_tools.addAction(self._act_compare)
 
-        act_import = QAction("导入十六进制文本(&I)...", self)
-        act_import.triggered.connect(self._import_hex)
-        tools_menu.addAction(act_import)
+        self._act_import = QAction(self)
+        self._act_import.triggered.connect(self._import_hex)
+        self._menu_tools.addAction(self._act_import)
 
-        act_export = QAction("导出选区(&E)...", self)
-        act_export.triggered.connect(self._export_selection)
-        tools_menu.addAction(act_export)
+        self._act_export = QAction(self)
+        self._act_export.triggered.connect(self._export_selection)
+        self._menu_tools.addAction(self._act_export)
 
-        act_convert = QAction("转换选区为…(&V)", self)
-        act_convert.triggered.connect(self._convert_selection)
-        tools_menu.addAction(act_convert)
+        self._act_convert = QAction(self)
+        self._act_convert.triggered.connect(self._convert_selection)
+        self._menu_tools.addAction(self._act_convert)
 
-        act_goto = QAction("转到偏移…", self)
-        act_goto.triggered.connect(self._goto_offset)
-        tools_menu.addAction(act_goto)
+        self._act_goto = QAction(self)
+        self._act_goto.triggered.connect(self._goto_offset)
+        self._menu_tools.addAction(self._act_goto)
 
-        win_menu = self.menuBar().addMenu("窗口(&W)")
-        act_show_search = QAction("显示搜索面板", self)
-        act_show_search.triggered.connect(lambda: self._show_dock(self._search_dock))
-        win_menu.addAction(act_show_search)
-        act_show_struct = QAction("显示结构模板面板", self)
-        act_show_struct.triggered.connect(lambda: self._show_dock(self._struct_dock))
-        win_menu.addAction(act_show_struct)
-        act_show_bm = QAction("显示书签面板", self)
-        act_show_bm.triggered.connect(lambda: self._show_dock(self._bookmark_dock))
-        win_menu.addAction(act_show_bm)
-        act_show_script = QAction("显示脚本面板", self)
-        act_show_script.triggered.connect(lambda: self._show_dock(self._script_dock))
-        win_menu.addAction(act_show_script)
-        win_menu.addSeparator()
-        act_show_all = QAction("显示全部工具面板", self)
-        act_show_all.triggered.connect(self._show_all_docks)
-        win_menu.addAction(act_show_all)
+        self._menu_win = mb.addMenu("")
+        self._act_show_search = QAction(self)
+        self._act_show_search.triggered.connect(
+            lambda: self._show_dock(self._search_dock)
+        )
+        self._menu_win.addAction(self._act_show_search)
+        self._act_show_struct = QAction(self)
+        self._act_show_struct.triggered.connect(
+            lambda: self._show_dock(self._struct_dock)
+        )
+        self._menu_win.addAction(self._act_show_struct)
+        self._act_show_bm = QAction(self)
+        self._act_show_bm.triggered.connect(
+            lambda: self._show_dock(self._bookmark_dock)
+        )
+        self._menu_win.addAction(self._act_show_bm)
+        self._act_show_script = QAction(self)
+        self._act_show_script.triggered.connect(
+            lambda: self._show_dock(self._script_dock)
+        )
+        self._menu_win.addAction(self._act_show_script)
+        self._menu_win.addSeparator()
+        self._act_show_all = QAction(self)
+        self._act_show_all.triggered.connect(self._show_all_docks)
+        self._menu_win.addAction(self._act_show_all)
 
-        help_menu = self.menuBar().addMenu("帮助(&H)")
-        act_about = QAction("关于(&A)", self)
-        act_about.triggered.connect(self._about)
-        help_menu.addAction(act_about)
+        self._menu_settings = mb.addMenu("")
+        self._act_open_settings = QAction(self)
+        self._act_open_settings.setShortcut(QKeySequence("Ctrl+,"))
+        self._act_open_settings.triggered.connect(self._open_settings)
+        self._menu_settings.addAction(self._act_open_settings)
+
+        self._menu_help = mb.addMenu("")
+        self._act_about = QAction(self)
+        self._act_about.triggered.connect(self._about)
+        self._menu_help.addAction(self._act_about)
 
         self._apply_qtawesome_icons(
             [
-                (act_new, "fa5s.file"),
-                (act_open, "fa5s.folder-open"),
-                (act_save, "fa5s.save"),
-                (act_save_as, "fa5s.save"),
-                (act_exit, "fa5s.door-open"),
-                (act_undo, "fa5s.undo"),
-                (act_redo, "fa5s.redo"),
-                (act_search, "fa5s.search"),
-                (act_checksum, "fa5s.file-signature"),
-                (act_compare, "fa5s.columns"),
-                (act_import, "fa5s.file-import"),
-                (act_export, "fa5s.file-export"),
-                (act_convert, "fa5s.exchange-alt"),
-                (act_goto, "fa5s.location-arrow"),
-                (act_show_search, "fa5s.search"),
-                (act_show_struct, "fa5s.sitemap"),
-                (act_show_bm, "fa5s.bookmark"),
-                (act_show_script, "fa5s.code"),
-                (act_show_all, "fa5s.window-maximize"),
-                (act_about, "fa5s.info-circle"),
+                (self._act_new, "fa5s.file"),
+                (self._act_open, "fa5s.folder-open"),
+                (self._act_save, "fa5s.save"),
+                (self._act_save_as, "fa5s.save"),
+                (self._act_exit, "fa5s.door-open"),
+                (self._act_undo, "fa5s.undo"),
+                (self._act_redo, "fa5s.redo"),
+                (self._act_search, "fa5s.search"),
+                (self._act_checksum, "fa5s.file-signature"),
+                (self._act_compare, "fa5s.columns"),
+                (self._act_import, "fa5s.file-import"),
+                (self._act_export, "fa5s.file-export"),
+                (self._act_convert, "fa5s.exchange-alt"),
+                (self._act_goto, "fa5s.location-arrow"),
+                (self._act_show_search, "fa5s.search"),
+                (self._act_show_struct, "fa5s.sitemap"),
+                (self._act_show_bm, "fa5s.bookmark"),
+                (self._act_show_script, "fa5s.code"),
+                (self._act_show_all, "fa5s.window-maximize"),
+                (self._act_open_settings, "fa5s.cog"),
+                (self._act_about, "fa5s.info-circle"),
             ]
         )
+
+    def retranslate_ui(self) -> None:
+        self.setWindowTitle(tr("app.title"))
+        self._menu_file.setTitle(tr("menu.file"))
+        self._act_new.setText(tr("action.new"))
+        self._act_open.setText(tr("action.open"))
+        self._act_save.setText(tr("action.save"))
+        self._act_save_as.setText(tr("action.save_as"))
+        self._act_exit.setText(tr("action.exit"))
+        self._menu_edit.setTitle(tr("menu.edit"))
+        self._act_undo.setText(tr("action.undo"))
+        self._act_redo.setText(tr("action.redo"))
+        self._menu_tools.setTitle(tr("menu.tools"))
+        self._act_search.setText(tr("action.search"))
+        self._act_checksum.setText(tr("action.checksum"))
+        self._act_compare.setText(tr("action.compare"))
+        self._act_import.setText(tr("action.import_hex"))
+        self._act_export.setText(tr("action.export_sel"))
+        self._act_convert.setText(tr("action.convert"))
+        self._act_goto.setText(tr("action.goto"))
+        self._menu_win.setTitle(tr("menu.window"))
+        self._act_show_search.setText(tr("action.show_search"))
+        self._act_show_struct.setText(tr("action.show_struct"))
+        self._act_show_bm.setText(tr("action.show_bookmark"))
+        self._act_show_script.setText(tr("action.show_script"))
+        self._act_show_all.setText(tr("action.show_all_docks"))
+        self._menu_settings.setTitle(tr("menu.settings"))
+        self._act_open_settings.setText(tr("action.open_settings"))
+        self._menu_help.setTitle(tr("menu.help"))
+        self._act_about.setText(tr("action.about"))
+
+        self._search_dock.retranslate_ui()
+        self._struct_dock.retranslate_ui()
+        self._bookmark_dock.retranslate_ui()
+        self._script_dock.retranslate_ui()
+
+        for i in range(self._tabs.count()):
+            w = self._tabs.widget(i)
+            if isinstance(w, DocumentEditor):
+                self._update_title(w)
+
+        doc = self.current_editor()
+        if doc is not None:
+            self._refresh_status(doc)
+
+    def _open_settings(self) -> None:
+        dlg = SettingsDialog(self, on_apply_lang=self.retranslate_ui)
+        dlg.exec()
 
     def _apply_qtawesome_icons(self, actions: list[tuple[QAction, str]]) -> None:
         """菜单图标：Font Awesome Free，经 QtAwesome 渲染（未安装则跳过）。"""
@@ -210,7 +276,7 @@ class MainWindow(QMainWindow):
 
     def _new_tab(self) -> None:
         doc = DocumentEditor(self._tabs)
-        self._tabs.addTab(doc, "未命名")
+        self._tabs.addTab(doc, tr("tab.untitled"))
         self._tabs.setCurrentWidget(doc)
         self._wire_document(doc)
         self._update_title(doc)
@@ -259,8 +325,8 @@ class MainWindow(QMainWindow):
         if isinstance(w, DocumentEditor) and w.model().modified:
             r = QMessageBox.question(
                 self,
-                "未保存",
-                "是否保存当前修改？",
+                tr("dlg.unsaved"),
+                tr("dlg.unsaved_msg"),
                 QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
             )
             if r == QMessageBox.Cancel:
@@ -283,14 +349,16 @@ class MainWindow(QMainWindow):
         event.accept()
 
     def _open_file(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "打开文件", "", "所有文件 (*.*)")
+        path, _ = QFileDialog.getOpenFileName(
+            self, tr("dlg.open_file"), "", tr("dlg.all_files")
+        )
         if not path:
             return
         doc = DocumentEditor(self._tabs)
         try:
             doc.model().load_file(path)
         except OSError as e:
-            QMessageBox.warning(self, "打开失败", str(e))
+            QMessageBox.warning(self, tr("dlg.open_fail"), str(e))
             return
         self._tabs.addTab(doc, Path(path).name)
         self._tabs.setCurrentWidget(doc)
@@ -309,14 +377,16 @@ class MainWindow(QMainWindow):
             doc.undo_stack().setClean()
             return True
         except OSError as e:
-            QMessageBox.warning(self, "保存失败", str(e))
+            QMessageBox.warning(self, tr("dlg.save_fail"), str(e))
             return False
 
     def _save_file_as(self) -> bool:
         doc = self.current_editor()
         if doc is None:
             return False
-        path, _ = QFileDialog.getSaveFileName(self, "另存为", "", "所有文件 (*.*)")
+        path, _ = QFileDialog.getSaveFileName(
+            self, tr("dlg.save_as"), "", tr("dlg.all_files")
+        )
         if not path:
             return False
         try:
@@ -328,7 +398,7 @@ class MainWindow(QMainWindow):
                 self._tabs.setTabText(idx, Path(path).name)
             return True
         except OSError as e:
-            QMessageBox.warning(self, "保存失败", str(e))
+            QMessageBox.warning(self, tr("dlg.save_fail"), str(e))
             return False
 
     def _undo(self) -> None:
@@ -348,16 +418,23 @@ class MainWindow(QMainWindow):
         pos = doc.hex_view().cursor_position()
         a, b = doc.hex_view().selection_range()
         sel = (b - a) if a != b else 0
+        mode = (
+            tr("status.overwrite")
+            if doc.hex_view().overwrite_mode()
+            else tr("status.insert")
+        )
         self._status.showMessage(
-            f"地址: 0x{pos:X} ({pos})  |  选区: {sel} 字节  |  长度: {len(m)}  |  "
-            f"模式: {'覆盖' if doc.hex_view().overwrite_mode() else '插入'}"
+            f"{tr('status.addr')}: 0x{pos:X} ({pos})  |  "
+            f"{tr('status.sel')}: {sel} {tr('status.bytes')}  |  "
+            f"{tr('status.len')}: {len(m)}  |  "
+            f"{tr('status.mode')}: {mode}"
         )
 
     def _update_title(self, doc: DocumentEditor) -> None:
         idx = self._tabs.indexOf(doc)
         if idx < 0:
             return
-        name = "未命名"
+        name = tr("tab.untitled")
         if doc.model().file_path:
             name = doc.model().file_path.name
         star = "*" if doc.model().modified else ""
@@ -371,10 +448,14 @@ class MainWindow(QMainWindow):
         dlg.exec()
 
     def _open_compare(self) -> None:
-        a, _ = QFileDialog.getOpenFileName(self, "文件 A", "", "所有文件 (*.*)")
+        a, _ = QFileDialog.getOpenFileName(
+            self, tr("dlg.compare_a"), "", tr("dlg.all_files")
+        )
         if not a:
             return
-        b, _ = QFileDialog.getOpenFileName(self, "文件 B", "", "所有文件 (*.*)")
+        b, _ = QFileDialog.getOpenFileName(
+            self, tr("dlg.compare_b"), "", tr("dlg.all_files")
+        )
         if not b:
             return
         if self._compare_window is None:
@@ -388,25 +469,27 @@ class MainWindow(QMainWindow):
         doc = self.current_editor()
         if doc is None:
             return
-        path, _ = QFileDialog.getOpenFileName(self, "导入十六进制文本", "", "文本 (*.txt);;所有 (*.*)")
+        path, _ = QFileDialog.getOpenFileName(
+            self, tr("dlg.import_hex"), "", tr("dlg.text_files")
+        )
         if not path:
             return
         try:
             text = Path(path).read_text(encoding="utf-8", errors="ignore")
         except OSError as e:
-            QMessageBox.warning(self, "导入", str(e))
+            QMessageBox.warning(self, tr("dlg.import"), str(e))
             return
         import re
 
         hx = re.sub(r"\s+|0x", "", text)
         if not re.fullmatch(r"[0-9A-Fa-f]*", hx) or len(hx) % 2:
-            QMessageBox.warning(self, "导入", "无效的十六进制文本")
+            QMessageBox.warning(self, tr("dlg.import"), tr("dlg.import_invalid"))
             return
         try:
             data = bytes.fromhex(hx)
             doc.insert_bytes_at_cursor(data)
         except Exception as e:  # noqa: BLE001
-            QMessageBox.warning(self, "导入", str(e))
+            QMessageBox.warning(self, tr("dlg.import"), str(e))
 
     def _export_selection(self) -> None:
         doc = self.current_editor()
@@ -415,7 +498,7 @@ class MainWindow(QMainWindow):
         try:
             doc.export_selection_to_file()
         except Exception as e:  # noqa: BLE001
-            QMessageBox.warning(self, "导出选区", str(e))
+            QMessageBox.warning(self, tr("dlg.export_sel"), str(e))
 
     def _convert_selection(self) -> None:
         doc = self.current_editor()
@@ -424,7 +507,7 @@ class MainWindow(QMainWindow):
         try:
             doc.open_convert_selection_dialog()
         except Exception as e:  # noqa: BLE001
-            QMessageBox.warning(self, "转换选区", str(e))
+            QMessageBox.warning(self, tr("dlg.convert_sel"), str(e))
 
     def _goto_offset(self) -> None:
         doc = self.current_editor()
@@ -433,7 +516,7 @@ class MainWindow(QMainWindow):
         try:
             doc.open_goto_offset_dialog()
         except Exception as e:  # noqa: BLE001
-            QMessageBox.warning(self, "转到偏移", str(e))
+            QMessageBox.warning(self, tr("dlg.goto"), str(e))
 
     def _show_dock(self, dock: QWidget) -> None:
         dock.show()
@@ -451,10 +534,4 @@ class MainWindow(QMainWindow):
             d.raise_()
 
     def _about(self) -> None:
-        QMessageBox.about(
-            self,
-            "关于 FreeOrBit",
-            "FreeOrBit — 免费开源十六进制编辑器\nPython / PySide6\n\n"
-            "界面图标使用 Font Awesome Free（https://fontawesome.com/license/free），"
-            "通过 QtAwesome 在 Qt 中渲染。",
-        )
+        QMessageBox.about(self, tr("about.title"), tr("about.body"))

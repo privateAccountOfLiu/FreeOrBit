@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from freeorbit.i18n import tr
 from freeorbit.template.fields import field_tree, load_template_from_path
 
 if TYPE_CHECKING:
@@ -25,7 +26,7 @@ if TYPE_CHECKING:
 
 class StructureDock(QDockWidget):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
-        super().__init__("结构", parent)
+        super().__init__(tr("dock.struct"), parent)
         self._doc: Optional[DocumentEditor] = None
         self._template_path: Optional[str] = None
 
@@ -33,15 +34,16 @@ class StructureDock(QDockWidget):
         self.setWidget(w)
         lay = QVBoxLayout(w)
         row = QHBoxLayout()
-        btn = QPushButton("加载模板…")
-        btn.clicked.connect(self._load_template)
-        row.addWidget(btn)
-        row.addWidget(QLabel("（可选）用户 .py 模板"))
+        self._btn_load = QPushButton()
+        self._btn_load.clicked.connect(self._load_template)
+        row.addWidget(self._btn_load)
+        self._lbl_hint = QLabel()
+        row.addWidget(self._lbl_hint)
         lay.addLayout(row)
 
         self._tree = QTreeWidget()
-        self._tree.setHeaderLabels(["字段", "值", "偏移"])
         lay.addWidget(self._tree)
+        self.retranslate_ui()
 
     def bind_document(self, doc: DocumentEditor) -> None:
         if self._doc is not None:
@@ -52,6 +54,14 @@ class StructureDock(QDockWidget):
         self._doc = doc
         doc.model().data_changed.connect(self._refresh)
         self._refresh()
+
+    def retranslate_ui(self) -> None:
+        self.setWindowTitle(tr("dock.struct"))
+        self._btn_load.setText(tr("struct.load"))
+        self._lbl_hint.setText(tr("struct.optional"))
+        self._tree.setHeaderLabels(
+            [tr("struct.col_field"), tr("struct.col_value"), tr("struct.col_offset")]
+        )
 
     def _refresh(self) -> None:
         self._tree.clear()
@@ -65,17 +75,17 @@ class StructureDock(QDockWidget):
 
     def _load_template(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
-            self, "模板文件", "", "Python (*.py);;所有 (*.*)"
+            self, tr("struct.dlg_template"), "", tr("struct.filter_py")
         )
         if not path:
             return
         mod = load_template_from_path(path)
         if mod is None:
-            QMessageBox.warning(self, "模板", "无法加载")
+            QMessageBox.warning(self, tr("struct.warn_title"), tr("struct.load_fail"))
             return
         self._template_path = path
         QMessageBox.information(
             self,
-            "模板",
-            f"已加载: {path}\n可在脚本中 importlib 使用；结构树仍为 DWORD 预览。",
+            tr("struct.warn_title"),
+            tr("struct.load_ok").format(path=path),
         )

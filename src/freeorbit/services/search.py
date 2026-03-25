@@ -19,6 +19,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from freeorbit.i18n import tr
+
 if TYPE_CHECKING:
     from freeorbit.viewmodel.document_editor import DocumentEditor
 
@@ -60,7 +62,7 @@ class SearchDock(QDockWidget):
     """搜索停靠窗口：字节串（十六进制）。"""
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
-        super().__init__("搜索", parent)
+        super().__init__(tr("dock.search"), parent)
         self._doc: Optional[DocumentEditor] = None
         self._pool = QThreadPool.globalInstance()
 
@@ -68,11 +70,11 @@ class SearchDock(QDockWidget):
         self.setWidget(w)
         lay = QVBoxLayout(w)
         row = QHBoxLayout()
-        row.addWidget(QLabel("十六进制:"))
+        self._lbl_hex = QLabel()
+        row.addWidget(self._lbl_hex)
         self._pat = QLineEdit()
-        self._pat.setPlaceholderText("例如 48 65 6C 6C 6F 或 48656C6C6F")
         row.addWidget(self._pat)
-        self._btn = QPushButton("搜索")
+        self._btn = QPushButton()
         self._btn.clicked.connect(self._run_search)
         row.addWidget(self._btn)
         lay.addLayout(row)
@@ -80,6 +82,7 @@ class SearchDock(QDockWidget):
         self._list = QListWidget()
         self._list.itemDoubleClicked.connect(self._on_jump)
         lay.addWidget(self._list)
+        self.retranslate_ui()
 
     def bind_document(self, doc: DocumentEditor) -> None:
         self._doc = doc
@@ -89,12 +92,18 @@ class SearchDock(QDockWidget):
         self.raise_()
         self._pat.setFocus()
 
+    def retranslate_ui(self) -> None:
+        self.setWindowTitle(tr("dock.search"))
+        self._lbl_hex.setText(tr("search.hex_label"))
+        self._pat.setPlaceholderText(tr("search.placeholder"))
+        self._btn.setText(tr("search.button"))
+
     def _parse_pattern(self) -> bytes:
         s = self._pat.text().strip().replace(" ", "").replace("\n", "")
         if not s:
             return b""
         if len(s) % 2:
-            raise ValueError("十六进制长度须为偶数")
+            raise ValueError(tr("search.hex_even"))
         return bytes.fromhex(s)
 
     def _run_search(self) -> None:
@@ -103,13 +112,15 @@ class SearchDock(QDockWidget):
         try:
             pat = self._parse_pattern()
         except ValueError as e:
-            QMessageBox.warning(self, "搜索", str(e))
+            QMessageBox.warning(self, tr("search.warn_title"), str(e))
             return
         model = self._doc.model()
         data = model.read(0, len(model))
         task = _SearchTask(data, pat, 0)
         task.signals.finished.connect(self._on_results)
-        task.signals.error.connect(lambda m: QMessageBox.warning(self, "搜索", m))
+        task.signals.error.connect(
+            lambda m: QMessageBox.warning(self, tr("search.warn_title"), m)
+        )
         self._pool.start(task)
 
     def _on_results(self, hits: list[int]) -> None:
@@ -123,7 +134,7 @@ class SearchDock(QDockWidget):
     def _status_msg(self, n: int) -> None:
         mw = self.parent()
         if mw is not None and hasattr(mw, "statusBar"):
-            mw.statusBar().showMessage(f"找到 {n} 处匹配")
+            mw.statusBar().showMessage(tr("search.found").format(n=n))
 
     def _on_jump(self, item: QListWidgetItem) -> None:
         if self._doc is None:

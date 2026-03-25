@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from freeorbit.i18n import tr
 from freeorbit.commands.edit_commands import (
     DeleteBytesCommand,
     InsertBytesCommand,
@@ -77,8 +78,8 @@ class DocumentEditor(QWidget):
 
     def _on_hex_context_menu(self, global_pos: QPoint) -> None:
         menu = QMenu(self)
-        menu.addAction("导出选区…", self.export_selection_to_file)
-        menu.addAction("转换选区为…", self.open_convert_selection_dialog)
+        menu.addAction(tr("ctx.export"), self.export_selection_to_file)
+        menu.addAction(tr("ctx.convert"), self.open_convert_selection_dialog)
         menu.exec(global_pos)
 
     def export_selection_to_file(self) -> None:
@@ -93,13 +94,13 @@ class DocumentEditor(QWidget):
                 return
             raw = self._model.read(a, b - a)
             path, _ = QFileDialog.getSaveFileName(
-                parent, "导出选区", "", "文本 (*.txt);;所有文件 (*.*)"
+                parent, tr("dlg.export_save"), "", tr("dlg.text_files")
             )
             if not path:
                 return
             Path(path).write_text(raw.hex().upper(), encoding="utf-8")
         except OSError as e:
-            QMessageBox.warning(parent, "导出失败", str(e))
+            QMessageBox.warning(parent, tr("dlg.export_fail"), str(e))
 
     def open_convert_selection_dialog(self) -> None:
         from freeorbit.dialogs.convert_selection_dialog import ConvertSelectionDialog
@@ -109,7 +110,7 @@ class DocumentEditor(QWidget):
             dlg = ConvertSelectionDialog(self._model, self._hex, parent)
             dlg.exec()
         except Exception as e:  # noqa: BLE001
-            QMessageBox.warning(parent, "转换选区", str(e))
+            QMessageBox.warning(parent, tr("dlg.convert_sel"), str(e))
 
     def open_goto_offset_dialog(self) -> None:
         from freeorbit.dialogs.goto_offset_dialog import GotoOffsetDialog
@@ -118,7 +119,7 @@ class DocumentEditor(QWidget):
         try:
             GotoOffsetDialog(self._hex, parent).exec()
         except Exception as e:  # noqa: BLE001
-            QMessageBox.warning(parent, "转到偏移", str(e))
+            QMessageBox.warning(parent, tr("dlg.goto"), str(e))
 
     def eventFilter(self, obj: object, event: QEvent) -> bool:
         if obj is self._hex and event.type() == QEvent.Type.KeyPress:

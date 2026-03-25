@@ -519,28 +519,9 @@ class HexEditorView(QScrollArea):
             self.cursor_moved.emit(self._cursor_pos)
             self._emit_selection()
         elif event.button() == Qt.MouseButton.RightButton:
-            # 右键菜单前先定位光标，使导出/转换针对当前字节或选区
+            # 保留当前选区；上下文菜单仍作用于已有光标/选区
             self.setFocus(Qt.FocusReason.MouseFocusReason)
-            if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
-                if self._anchor is None:
-                    self._anchor = self._cursor_pos
-                self._cursor_pos = idx
-            else:
-                self._cursor_pos = idx
-                self._anchor = None
-            if area == "hex":
-                rel = event.position().x() - self._hex_draw_left
-                cw = self._fm.horizontalAdvance("0")
-                hex_cell = self._hex_cell_pitch()
-                col = int(rel / hex_cell)
-                col = max(0, min(self._bytes_per_line - 1, col))
-                frac = rel - col * hex_cell
-                self._nibble = 0 if frac < cw else 1
-            else:
-                self._nibble = 0
-            self._canvas.update()
-            self.cursor_moved.emit(self._cursor_pos)
-            self._emit_selection()
+            return
 
     def _mouse_move(self, event: QMouseEvent) -> None:
         if self._model is None:

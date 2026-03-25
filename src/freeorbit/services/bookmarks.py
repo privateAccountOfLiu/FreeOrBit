@@ -16,13 +16,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from freeorbit.i18n import tr
+
 if TYPE_CHECKING:
     from freeorbit.viewmodel.document_editor import DocumentEditor
 
 
 class BookmarkPanel(QDockWidget):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
-        super().__init__("书签", parent)
+        super().__init__(tr("dock.bookmark"), parent)
         self._doc: Optional[DocumentEditor] = None
 
         w = QWidget()
@@ -30,16 +32,21 @@ class BookmarkPanel(QDockWidget):
         lay = QVBoxLayout(w)
         row = QHBoxLayout()
         self._name = QLineEdit()
-        self._name.setPlaceholderText("名称")
         row.addWidget(self._name)
-        btn_add = QPushButton("添加当前位置")
-        btn_add.clicked.connect(self._add)
-        row.addWidget(btn_add)
+        self._btn_add = QPushButton()
+        self._btn_add.clicked.connect(self._add)
+        row.addWidget(self._btn_add)
         lay.addLayout(row)
 
         self._list = QListWidget()
         self._list.itemDoubleClicked.connect(self._jump)
         lay.addWidget(self._list)
+        self.retranslate_ui()
+
+    def retranslate_ui(self) -> None:
+        self.setWindowTitle(tr("dock.bookmark"))
+        self._name.setPlaceholderText(tr("bookmark.name_ph"))
+        self._btn_add.setText(tr("bookmark.add"))
 
     def bind_document(self, doc: DocumentEditor) -> None:
         self._doc = doc
