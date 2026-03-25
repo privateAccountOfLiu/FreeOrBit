@@ -55,4 +55,8 @@ pip install nuitka ordered-set zstandard
 
 ## 许可
 
-（请在此补充许可证信息。）
+MIT License
+
+## 其它
+
+软件最终解释权归作者PrivateLiu所有
