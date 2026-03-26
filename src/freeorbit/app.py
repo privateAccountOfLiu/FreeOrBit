@@ -8,6 +8,11 @@ import traceback
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QMessageBox, QStyleFactory
 
+from freeorbit.runtime_bootstrap import ensure_capstone_dll_path
+
+# 必须在导入 main_window（进而导入 disasm_dock → capstone）之前执行
+ensure_capstone_dll_path()
+
 from freeorbit.icon_assets import app_icon
 from freeorbit.i18n import tr
 from freeorbit.main_window import MainWindow

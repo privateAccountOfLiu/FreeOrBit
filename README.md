@@ -46,8 +46,7 @@ python -m freeorbit
 先安装依赖与 Nuitka：
 
 ```bash
-pip install -e .
-pip install nuitka ordered-set zstandard
+pip install -e ".[build]"
 ```
 
 在项目根目录执行：

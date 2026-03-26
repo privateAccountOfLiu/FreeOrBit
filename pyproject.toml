@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "freeorbit"
-version = "1.0.0"
+version = "1.0.1"
 description = "FreeOrBit — 基于 PySide6 的十六进制/二进制编辑器"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -16,6 +16,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0", "ruff>=0.1.0"]
+# Nuitka 单文件打包：onefile 压缩依赖 zstandard；ordered-set 为 Nuitka 常用依赖
+build = ["nuitka>=2.0", "ordered-set", "zstandard"]
 
 [project.scripts]
 freeorbit = "freeorbit.__main__:main"

@@ -17,3 +17,6 @@ __pycache__/
 
 # 本地临时文件
 .write_test
+
+# 测试目录（发布仓库不包含；本地可自建 tests/ 运行 pytest）
+/tests/
