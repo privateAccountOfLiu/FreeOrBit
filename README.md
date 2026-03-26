@@ -71,4 +71,6 @@ pip install -e ".[build]"
 
 ## 许可
 
-（请在此补充许可证信息。）
+### [Apache License 2.0](LICENSE)
+### 软件最终解释权归作者PrivateLiu所有
+
