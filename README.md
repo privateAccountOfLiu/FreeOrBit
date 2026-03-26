@@ -1,4 +1,6 @@
-# FreeOrBit
+# FreeOrBit  一款免费开源的Hex Editor（16进制编辑器）
+
+![FreeOrBit MainWindow](MainWindowShow.png)
 
 基于 **PySide6** 的十六进制 / 二进制编辑器，面向逆向、固件与数据分析场景。支持大文件（`mmap`）、多标签、暗色主题、中英文界面。
 
