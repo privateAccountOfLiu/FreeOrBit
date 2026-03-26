@@ -6,7 +6,7 @@ import sys
 import traceback
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication, QMessageBox, QStyleFactory
 
 from freeorbit.icon_assets import app_icon
 from freeorbit.i18n import tr
@@ -37,6 +37,14 @@ def main() -> int:
     app.setApplicationName("FreeOrBit")
     app.setOrganizationName("FreeOrBit")
 
+    # 全局界面样式：Windows 优先使用原生 windowsvista（与系统主题一致）
+    if sys.platform == "win32":
+        for key in ("windowsvista", "windows"):
+            st = QStyleFactory.create(key)
+            if st is not None:
+                app.setStyle(st)
+                break
+
     # Windows：若用户选择默认以管理员启动，则尽早提权重启（在闪屏与主窗口之前）
     if sys.platform == "win32":
         from freeorbit.platform.win_elevation import maybe_relaunch_if_requested
@@ -57,13 +65,6 @@ def main() -> int:
     splash.set_progress(8)
     splash.set_status(tr("splash.theme"))
     app.processEvents()
-    try:
-        from qt_material import apply_stylesheet
-
-        apply_stylesheet(app, theme="dark_blue.xml")
-    except Exception:
-        # 未安装或主题加载失败时使用系统原生样式
-        pass
 
     splash.set_progress(42)
     splash.set_status(tr("splash.ui"))

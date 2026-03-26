@@ -16,7 +16,7 @@
 ## 运行要求
 
 - Python 3.10+
-- 依赖见 [`pyproject.toml`](pyproject.toml)：`PySide6`、`qt-material`、`QtAwesome`、`capstone`
+- 依赖见 [`pyproject.toml`](pyproject.toml)：`PySide6`、`QtAwesome`、`capstone`（Windows 下使用系统原生 `windowsvista` 界面样式）
 
 ## 从源码运行
 

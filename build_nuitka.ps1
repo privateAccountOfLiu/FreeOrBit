@@ -10,7 +10,7 @@
 # - --enable-plugin=anti-bloat：避免打入 pytest 等测试栈。
 # - --include-package=capstone + --include-package-data=capstone：反汇编依赖 capstone 及 lib 下原生 DLL。
 # - --nofollow-import-to=*.tests：跳过依赖树中的 tests 子包（若被间接引用）。
-# - --include-package-data=qt_material / qtawesome：主题与图标字体。
+# - --include-package-data=qtawesome：图标字体（QtAwesome）。
 #
 # 若打包或运行解压时内存不足，请使用:
 #   .\build_nuitka.ps1 -OneFileNoCompression
@@ -60,10 +60,8 @@ $NuitkaArgs = @(
     "--noinclude-unittest-mode=nofollow",
     '--nofollow-import-to=*.tests',
     "--include-package=freeorbit",
-    "--include-package=qt_material",
     "--include-package=qtawesome",
     "--include-package=capstone",
-    "--include-package-data=qt_material",
     "--include-package-data=qtawesome",
     "--include-package-data=capstone",
     "--include-data-files=$DataIco=freeorbit/resources/FreeOrBit.ico"

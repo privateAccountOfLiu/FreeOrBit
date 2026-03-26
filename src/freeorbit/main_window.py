@@ -42,7 +42,7 @@ class MainWindow(QMainWindow):
         self.resize(1100, 700)
 
         self._tabs = QTabWidget(self)
-        # qt-material 等主题可能把标签设为全大写，覆盖为保持文件名原样
+        # 部分第三方样式会把标签页改为全大写，强制保持文件名为原文大小写
         self._tabs.setStyleSheet("QTabBar::tab { text-transform: none; }")
         self._tabs.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding

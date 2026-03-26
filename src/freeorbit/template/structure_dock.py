@@ -59,21 +59,6 @@ class StructureDock(QDockWidget):
 
         w = QWidget()
         self.setWidget(w)
-        w.setStyleSheet(
-            """
-            QPushButton#StructToolbarButton {
-                min-height: 26px;
-                min-width: 52px;
-                max-width: 72px;
-                padding: 4px 8px;
-                font-size: 12px;
-            }
-            QLabel#StructFilenameLabel {
-                font-size: 12px;
-                padding: 2px 0 4px 2px;
-            }
-            """
-        )
         lay = QVBoxLayout(w)
         lay.setContentsMargins(6, 6, 6, 6)
         lay.setSpacing(4)
@@ -86,17 +71,14 @@ class StructureDock(QDockWidget):
 
         row.addStretch(1)
         self._btn_load = QPushButton()
-        self._btn_load.setObjectName("StructToolbarButton")
         self._btn_load.clicked.connect(self._load_template)
         row.addWidget(self._btn_load)
 
         self._btn_clear = QPushButton()
-        self._btn_clear.setObjectName("StructToolbarButton")
         self._btn_clear.clicked.connect(self._clear_template)
         row.addWidget(self._btn_clear)
 
         self._btn_builtin = QPushButton()
-        self._btn_builtin.setObjectName("StructToolbarButton")
         self._menu_builtin = QMenu(self._btn_builtin)
         self._btn_builtin.setMenu(self._menu_builtin)
         row.addWidget(self._btn_builtin)
@@ -238,16 +220,13 @@ class StructureDock(QDockWidget):
             self._lbl_status.setToolTip("")
 
         if err and self._template_module is not None and self._template_path:
-            self._lbl_status.setStyleSheet(
-                "color: #e57373; font-size: 12px; padding: 2px 0 4px 2px;"
-            )
+            # 错误态使用醒目红色（与系统按钮样式并存）
+            self._lbl_status.setStyleSheet("color: #a40000;")
             self._lbl_status.setToolTip(
                 f"{Path(self._template_path).resolve()}\n\n{err}"
             )
         else:
-            self._lbl_status.setStyleSheet(
-                "color: palette(mid); font-size: 12px; padding: 2px 0 4px 2px;"
-            )
+            self._lbl_status.setStyleSheet("color: palette(Mid);")
 
         self._apply_filename_elide()
 
