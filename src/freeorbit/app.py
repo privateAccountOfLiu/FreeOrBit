@@ -9,7 +9,9 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from freeorbit.icon_assets import app_icon
+from freeorbit.i18n import tr
 from freeorbit.main_window import MainWindow
+from freeorbit.ui.splash_screen import SplashScreen
 
 
 def _install_excepthook() -> None:
@@ -35,10 +37,26 @@ def main() -> int:
     app.setApplicationName("FreeOrBit")
     app.setOrganizationName("FreeOrBit")
 
+    # Windows：若用户选择默认以管理员启动，则尽早提权重启（在闪屏与主窗口之前）
+    if sys.platform == "win32":
+        from freeorbit.platform.win_elevation import maybe_relaunch_if_requested
+
+        if maybe_relaunch_if_requested():
+            sys.exit(0)
+
+    splash = SplashScreen()
+    splash.set_progress(0)
+    splash.show()
+    app.processEvents()
+
     _ico = app_icon()
     if _ico is not None:
         app.setWindowIcon(_ico)
+        splash.setWindowIcon(_ico)
 
+    splash.set_progress(8)
+    splash.set_status(tr("splash.theme"))
+    app.processEvents()
     try:
         from qt_material import apply_stylesheet
 
@@ -47,9 +65,15 @@ def main() -> int:
         # 未安装或主题加载失败时使用系统原生样式
         pass
 
+    splash.set_progress(42)
+    splash.set_status(tr("splash.ui"))
+    app.processEvents()
+
     _install_excepthook()
 
+    splash.set_progress(72)
     win = MainWindow()
-    # 最大化以占满工作区，保留标题栏关闭/最小化/还原按钮（非真正全屏）
-    win.showMaximized()
+    splash.set_progress(100)
+    app.processEvents()
+    splash.finish(win)
     return app.exec()

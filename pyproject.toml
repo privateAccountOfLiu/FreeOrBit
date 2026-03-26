@@ -12,6 +12,7 @@ dependencies = [
     "PySide6>=6.6.0",
     "qt-material>=2.14",
     "QtAwesome>=1.2.0",
+    "capstone>=5.0",
 ]
 
 [project.optional-dependencies]
@@ -24,7 +25,7 @@ freeorbit = "freeorbit.__main__:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-freeorbit = ["resources/*.ico"]
+freeorbit = ["resources/*.ico", "resources/templates/*.py"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

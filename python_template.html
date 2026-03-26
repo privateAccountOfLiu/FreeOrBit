@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FreeOrBit 结构模板（Python）指南</title>
+  <style>
+    :root {
+      --bg: #1a1d23;
+      --panel: #242830;
+      --text: #e6e8ec;
+      --muted: #9aa3b2;
+      --accent: #6eb5ff;
+      --border: #3d4454;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+      line-height: 1.6;
+      margin: 0;
+      padding: 2rem 1.5rem 3rem;
+      background: var(--bg);
+      color: var(--text);
+      max-width: 52rem;
+      margin-left: auto;
+      margin-right: auto;
+    }
+    h1 { font-size: 1.75rem; font-weight: 600; margin-top: 0; }
+    h2 { font-size: 1.2rem; margin-top: 2rem; border-bottom: 1px solid var(--border); padding-bottom: 0.35rem; }
+    h3 { font-size: 1rem; margin-top: 1.25rem; color: var(--accent); }
+    p, li { color: var(--text); }
+    .muted { color: var(--muted); font-size: 0.95rem; }
+    code, pre {
+      font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+      font-size: 0.9em;
+    }
+    code {
+      background: var(--panel);
+      padding: 0.15em 0.4em;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+    }
+    pre {
+      background: var(--panel);
+      padding: 1rem;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      overflow-x: auto;
+      line-height: 1.45;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.95rem;
+    }
+    th, td {
+      text-align: left;
+      padding: 0.5rem 0.75rem;
+      border: 1px solid var(--border);
+    }
+    th { background: var(--panel); }
+    .note {
+      background: var(--panel);
+      border-left: 4px solid var(--accent);
+      padding: 0.75rem 1rem;
+      margin: 1rem 0;
+      border-radius: 0 8px 8px 0;
+    }
+  </style>
+</head>
+<body>
+  <h1>FreeOrBit 结构模板（Python）指南</h1>
+  <p class="muted">本文档说明如何用 Python 为「结构」停靠面板编写<strong>自定义二进制模板</strong>。实现以 <code>src/freeorbit/template/fields.py</code>、<code>structure_dock.py</code> 为准；与「脚本」面板（<code>python_script_api.html</code>）是两套独立机制。</p>
+
+  <h2>与脚本面板的区别</h2>
+  <ul>
+    <li><strong>脚本面板</strong>：通过 <code>exec</code> 运行代码，使用全局 <code>editor</code>（<code>EditorAPI</code>）读写与日志，适合一次性操作或批处理。</li>
+    <li><strong>结构模板</strong>：单独的 <code>.py</code> 文件，由程序<strong>动态加载</strong>，只需实现 <code>build_field_tree(model)</code>，返回一棵 <code>FieldNode</code> 树，用于在结构树中展示字段、偏移与可编辑值。</li>
+  </ul>
+
+  <h2>入口约定</h2>
+  <p>模板模块<strong>必须</strong>提供以下函数（名称固定，与常量 <code>TEMPLATE_ENTRY_FN</code> 一致）：</p>
+  <pre><code>def build_field_tree(model: BinaryDataModel) -&gt; list[FieldNode] | None:
+    ...</code></pre>
+  <ul>
+    <li><code>model</code>：当前文档的 <code>BinaryDataModel</code>，可用 <code>len(model)</code>、<code>model.read(offset, size)</code> 等读取字节。</li>
+    <li>返回值：顶层字段的列表；若返回 <code>None</code> 或未定义该函数，程序会回退到内置的 DWORD 预览树。</li>
+    <li>若函数抛出异常、返回非列表、列表项不是 <code>FieldNode</code>、或 <code>dtype</code> 非法，程序会<strong>仍显示回退树</strong>，并在界面用红色文件名提示错误（详情见悬停提示）。</li>
+  </ul>
+
+  <h2><code>FieldNode</code></h2>
+  <p>定义见 <code>freeorbit.template.fields.FieldNode</code>（数据类）：</p>
+  <table>
+    <thead>
+      <tr><th>字段</th><th>说明</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>name</code></td>
+        <td>字段显示名。</td>
+      </tr>
+      <tr>
+        <td><code>offset</code> / <code>size</code></td>
+        <td>在文件中的字节偏移与长度；标量写回时长度必须与 <code>dtype</code> 一致。</td>
+      </tr>
+      <tr>
+        <td><code>value_repr</code></td>
+        <td>「值」列展示的字符串（可读格式）。</td>
+      </tr>
+      <tr>
+        <td><code>children</code></td>
+        <td>可选，嵌套的 <code>FieldNode</code> 列表，用于分组显示。</td>
+      </tr>
+      <tr>
+        <td><code>dtype</code></td>
+        <td>可选。非空且为<a href="#dtypes">允许的标量类型名</a>时，该节点「值」列可编辑，并通过 <code>encode_field_value</code> 写回二进制。</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="dtypes">允许的 <code>dtype</code>（写回）</h2>
+  <p>与 <code>VALID_DTYPES</code> 一致，例如：<code>u8</code>、<code>u16le</code>/<code>u16be</code>、<code>u32le</code>/<code>u32be</code>、<code>u64le</code>/<code>u64be</code>、<code>i32le</code>/<code>i32be</code>、<code>i64le</code>/<code>i64be</code>、<code>f32le</code>/<code>f32be</code>、<code>f64le</code>/<code>f64be</code>。父节点若仅作分组，可将 <code>dtype</code> 设为 <code>None</code>。</p>
+
+  <h2><code>freeorbit.template.builders</code></h2>
+  <p>提供与 010 风格类似的便捷函数，从 <code>model</code> 读取并生成带正确 <code>dtype</code> 与 <code>value_repr</code> 的 <code>FieldNode</code>，例如 <code>u8</code>、<code>u16_le</code>、<code>u32_le</code>、<code>i32_le</code>、<code>f32_le</code> 等。可直接组合进 <code>build_field_tree</code> 的返回值。</p>
+
+  <h2>加载与内置模板</h2>
+  <ul>
+    <li>在「结构」面板使用<strong>加载</strong>选择任意 <code>.py</code> 文件；路径会记入设置，下次启动可恢复。</li>
+    <li><strong>内置</strong>菜单项来自包内目录 <code>freeorbit/resources/templates/</code>（随 wheel/源码分发），实现见 <code>builtin_templates.py</code>。</li>
+    <li>在<strong>设置 → 外观与行为 → 结构模板</strong>中可配置：打开文件时按<strong>扩展名 / 文件头 Magic</strong>自动选用模板（多行规则，实现见 <code>freeorbit/template/auto_template.py</code>）；亦可启用「打开文件时自动加载上次模板」。</li>
+    <li>仓库根目录下的 <code>templates/example_build_field_tree.py</code> 为完整示例，可复制后修改。</li>
+  </ul>
+
+  <h2>写回与校验</h2>
+  <p>用户在「值」列修改后，程序调用 <code>encode_field_value(dtype, text)</code> 得到字节，再 <code>replace_range</code>。整数可输入十进制或 <code>0x</code> 前缀十六进制；浮点按 <code>float</code> 解析。若编码失败或长度与 <code>size</code> 不符，会提示并刷新树。</p>
+
+  <h2>示例（节选）</h2>
+  <pre><code>from freeorbit.model.binary_data_model import BinaryDataModel
+from freeorbit.template.builders import u16_le, u32_le
+from freeorbit.template.fields import FieldNode
+
+def build_field_tree(model: BinaryDataModel) -&gt; list[FieldNode]:
+    if len(model) &lt; 8:
+        return []
+    return [
+        u32_le("magic", 0, model),
+        u16_le("version", 4, model),
+    ]</code></pre>
+  <p class="muted">完整示例见仓库 <code>templates/example_build_field_tree.py</code>。</p>
+
+  <h2>延伸阅读</h2>
+  <ul>
+    <li><code>Scheme.md</code> 中关于二进制模板与产品策划的章节。</li>
+    <li><code>python_script_api.html</code>：脚本面板 API，与模板无共用全局环境。</li>
+  </ul>
+
+  <div class="note">
+    <strong>版本</strong>：文档与 FreeOrBit 源码同步维护；模板行为以 <code>fields.py</code> 中 <code>run_template_field_tree</code>、<code>load_template_from_path</code> 为准。
+  </div>
+</body>
+</html>

@@ -181,8 +181,11 @@ data = editor.read(0, 16)
 editor.message(hex(data))</code></pre>
   <p class="muted">与程序内脚本面板占位提示一致。也可使用 <code>print(hex(data))</code>，输出同样进入「输出」区域。</p>
 
+  <h2>与「结构」模板的关系</h2>
+  <p>脚本面板与「结构」面板的 <strong>二进制模板</strong>相互独立。模板为独立 <code>.py</code> 文件，需实现 <code>build_field_tree(model)</code>，返回 <code>FieldNode</code> 列表；可使用 <code>freeorbit.template.builders</code> 中的 <code>u32_le</code> 等辅助函数。为字段设置 <code>dtype</code>（如 <code>u32le</code>）后，可在结构树「值」列编辑并写回文件。完整模板说明见根目录 <a href="python_template.html"><code>python_template.html</code></a>；策划与路线图见 <code>Scheme.md</code> 第 8 节；示例见 <code>templates/example_build_field_tree.py</code>。</p>
+
   <div class="note">
-    <strong>版本</strong>：文档与 FreeOrBit 源码同步维护；API 如有变更，请以 <code>editor_api.py</code> 为准。
+    <strong>版本</strong>：文档与 FreeOrBit 源码同步维护；脚本 API 以 <code>editor_api.py</code> 为准；模板以 <code>freeorbit.template.fields</code> 与 <a href="python_template.html"><code>python_template.html</code></a> 为准。
   </div>
 </body>
 </html>

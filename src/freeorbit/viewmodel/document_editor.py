@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from PySide6.QtCore import QByteArray, QEvent, QMimeData, QPoint, Qt
 from PySide6.QtGui import QClipboard, QGuiApplication, QKeyEvent, QUndoStack
@@ -50,6 +50,45 @@ class DocumentEditor(QWidget):
         self._hex.cursor_moved.connect(self._on_cursor_moved)
         self._hex.selection_changed.connect(self._on_selection_changed)
         self._hex.context_menu_requested.connect(self._on_hex_context_menu)
+        self._external_flush: Optional[Callable[[], None]] = None
+        self._external_close: Optional[Callable[[], None]] = None
+
+    def set_external_hooks(
+        self,
+        *,
+        flush: Optional[Callable[[], None]] = None,
+        close: Optional[Callable[[], None]] = None,
+    ) -> None:
+        """进程内存 / 磁盘切片等：保存时写回、关闭句柄。"""
+        self._external_flush = flush
+        self._external_close = close
+
+    def external_flush(self) -> None:
+        if self._external_flush is not None:
+            self._external_flush()
+
+    def external_close(self) -> None:
+        if self._external_close is not None:
+            self._external_close()
+        self._external_close = None
+        self._external_flush = None
+
+    def uses_external_save(self) -> bool:
+        """是否为进程内存 / 磁盘切片等外部缓冲（保存时写回而非另存为）。"""
+        return self._external_flush is not None
+
+    def _fixed_external(self) -> bool:
+        return not self._model.allows_resize
+
+    def _warn_fixed_external(self) -> bool:
+        if not self._fixed_external():
+            return False
+        QMessageBox.information(
+            self.window(),
+            tr("doc.external_title"),
+            tr("doc.external_no_resize"),
+        )
+        return True
 
     def model(self) -> BinaryDataModel:
         return self._model
@@ -62,6 +101,8 @@ class DocumentEditor(QWidget):
 
     def insert_bytes_at_cursor(self, data: bytes) -> None:
         """在光标处插入并记入撤销栈。"""
+        if self._warn_fixed_external():
+            return
         self._model.ensure_mutable_copy()
         pos = self._hex.cursor_position()
         self._undo.push(InsertBytesCommand(self._model, pos, data))
@@ -196,6 +237,8 @@ class DocumentEditor(QWidget):
         pos = min(pos, max(0, size - 1)) if size else 0
 
         if size == 0:
+            if self._fixed_external():
+                return
             self._undo.push(InsertBytesCommand(model, 0, bytes([d << 4])))
             self._hex.set_nibble_index(1)
             self._hex.update_view()
@@ -218,6 +261,10 @@ class DocumentEditor(QWidget):
             if next_pos < size:
                 self._hex.set_cursor_position(next_pos, nibble=0)
             elif pos == size - 1:
+                if self._fixed_external():
+                    self._hex.set_cursor_position(pos, nibble=0)
+                    self._hex.update_view()
+                    return
                 # 在文件末尾追加空字节，继续输入
                 self._undo.push(InsertBytesCommand(model, size, bytes([0])))
                 self._hex.set_cursor_position(size, nibble=0)
@@ -250,6 +297,13 @@ class DocumentEditor(QWidget):
         self._delete_selection()
 
     def _paste(self) -> None:
+        if self._fixed_external():
+            QMessageBox.information(
+                self.window(),
+                tr("doc.external_title"),
+                tr("doc.external_no_paste"),
+            )
+            return
         clip = QGuiApplication.clipboard()
         text = clip.text().strip()
         raw = clip.mimeData().data("application/octet-stream")
@@ -277,6 +331,8 @@ class DocumentEditor(QWidget):
         self._hex.set_cursor_position(min(pos + len(data) - 1, hi), nibble=1)
 
     def _delete_forward(self) -> None:
+        if self._warn_fixed_external():
+            return
         a, b = self._hex.selection_range()
         self._model.ensure_mutable_copy()
         if a != b:
@@ -291,6 +347,8 @@ class DocumentEditor(QWidget):
         )
 
     def _delete_backward(self) -> None:
+        if self._warn_fixed_external():
+            return
         a, b = self._hex.selection_range()
         self._model.ensure_mutable_copy()
         if a != b:
@@ -310,6 +368,8 @@ class DocumentEditor(QWidget):
             self._hex.set_cursor_position(pos - 1, nibble=1)
 
     def _delete_selection(self) -> None:
+        if self._warn_fixed_external():
+            return
         a, b = self._hex.selection_range()
         if a == b:
             return

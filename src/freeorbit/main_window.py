@@ -5,9 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSettings, Qt, QTimer
 from PySide6.QtGui import QAction, QCloseEvent, QKeySequence, QPalette
 from PySide6.QtWidgets import (
+    QDialog,
     QFileDialog,
     QMainWindow,
     QMessageBox,
@@ -17,13 +18,20 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from freeorbit.dialogs.open_disk_dialog import OpenDiskDialog
+from freeorbit.dialogs.open_process_dialog import OpenProcessDialog
 from freeorbit.dialogs.settings_dialog import SettingsDialog
 from freeorbit.i18n import tr
 from freeorbit.services.bookmarks import BookmarkPanel
+from freeorbit.platform import disk_raw
+from freeorbit.platform import win_memory
+from freeorbit.services.byte_tools_dock import ByteToolsDock
 from freeorbit.services.checksum_dialog import ChecksumDialog
+from freeorbit.services.disasm_dock import DisasmDock
 from freeorbit.services.compare_view import CompareWindow
 from freeorbit.services.search import SearchDock
 from freeorbit.services.script_runner import ScriptDock
+from freeorbit.template.auto_template import match_auto_template, parse_rules_text
 from freeorbit.template.structure_dock import StructureDock
 from freeorbit.viewmodel.document_editor import DocumentEditor
 
@@ -58,6 +66,17 @@ class MainWindow(QMainWindow):
 
         self._script_dock = ScriptDock(self)
         self.addDockWidget(Qt.BottomDockWidgetArea, self._script_dock)
+        # 默认隐藏脚本面板，需时通过菜单「窗口 → 显示脚本面板」打开
+        self._script_dock.hide()
+
+        self._byte_tools_dock = ByteToolsDock(self)
+        self.addDockWidget(Qt.BottomDockWidgetArea, self._byte_tools_dock)
+        # 默认隐藏填充/字节运算面板，需时通过「窗口」菜单打开
+        self._byte_tools_dock.hide()
+
+        self._disasm_dock = DisasmDock(self)
+        self.addDockWidget(Qt.BottomDockWidgetArea, self._disasm_dock)
+        self._disasm_dock.hide()
 
         # 四周工具区默认偏窄，中央编辑区占更多空间（用户仍可拖曳调整）
         self._bookmark_dock.setMaximumWidth(260)
@@ -65,12 +84,18 @@ class MainWindow(QMainWindow):
         self._struct_dock.setMaximumWidth(300)
         # 底部脚本区默认占用略少，用户仍可拖曳边缘拉大
         self._script_dock.setMaximumHeight(300)
+        # 填充/字节运算内容较多，不限制最大高度，由面板内滚动条承载
+        self._byte_tools_dock.setMinimumWidth(320)
+        self._disasm_dock.setMaximumHeight(320)
 
         self._compare_window: Optional[CompareWindow] = None
 
         self._create_menus()
         self.retranslate_ui()
         self._new_tab()
+        # 首帧后恢复结构模板路径（需 QApplication 与 QSettings 已就绪）
+        QTimer.singleShot(0, self._struct_dock.restore_saved_template)
+        self._struct_dock.struct_tree_changed.connect(self._on_struct_tree_changed)
 
     def _create_menus(self) -> None:
         mb = self.menuBar()
@@ -84,6 +109,14 @@ class MainWindow(QMainWindow):
         self._act_open.setShortcut(QKeySequence.Open)
         self._act_open.triggered.connect(self._open_file)
         self._menu_file.addAction(self._act_open)
+
+        self._act_open_process = QAction(self)
+        self._act_open_process.triggered.connect(self._open_process_memory)
+        self._menu_file.addAction(self._act_open_process)
+
+        self._act_open_disk = QAction(self)
+        self._act_open_disk.triggered.connect(self._open_disk_slice)
+        self._menu_file.addAction(self._act_open_disk)
 
         self._act_save = QAction(self)
         self._act_save.setShortcut(QKeySequence.Save)
@@ -110,6 +143,11 @@ class MainWindow(QMainWindow):
         self._act_redo.setShortcut(QKeySequence.Redo)
         self._act_redo.triggered.connect(self._redo)
         self._menu_edit.addAction(self._act_redo)
+
+        self._act_locate_struct = QAction(self)
+        self._act_locate_struct.setShortcut(QKeySequence("Ctrl+J"))
+        self._act_locate_struct.triggered.connect(self._locate_struct_from_cursor)
+        self._menu_edit.addAction(self._act_locate_struct)
 
         self._menu_tools = mb.addMenu("")
         self._act_search = QAction(self)
@@ -141,6 +179,10 @@ class MainWindow(QMainWindow):
         self._act_goto.triggered.connect(self._goto_offset)
         self._menu_tools.addAction(self._act_goto)
 
+        self._act_disasm = QAction(self)
+        self._act_disasm.triggered.connect(self._show_disasm_dock)
+        self._menu_tools.addAction(self._act_disasm)
+
         self._menu_win = mb.addMenu("")
         self._act_show_search = QAction(self)
         self._act_show_search.triggered.connect(
@@ -162,6 +204,16 @@ class MainWindow(QMainWindow):
             lambda: self._show_dock(self._script_dock)
         )
         self._menu_win.addAction(self._act_show_script)
+        self._act_show_byte_tools = QAction(self)
+        self._act_show_byte_tools.triggered.connect(
+            lambda: self._show_dock(self._byte_tools_dock)
+        )
+        self._menu_win.addAction(self._act_show_byte_tools)
+        self._act_show_disasm = QAction(self)
+        self._act_show_disasm.triggered.connect(
+            lambda: self._show_dock(self._disasm_dock)
+        )
+        self._menu_win.addAction(self._act_show_disasm)
         self._menu_win.addSeparator()
         self._act_show_all = QAction(self)
         self._act_show_all.triggered.connect(self._show_all_docks)
@@ -182,11 +234,14 @@ class MainWindow(QMainWindow):
             [
                 (self._act_new, "fa5s.file"),
                 (self._act_open, "fa5s.folder-open"),
+                (self._act_open_process, "fa5s.microchip"),
+                (self._act_open_disk, "fa5s.hdd"),
                 (self._act_save, "fa5s.save"),
                 (self._act_save_as, "fa5s.save"),
                 (self._act_exit, "fa5s.door-open"),
                 (self._act_undo, "fa5s.undo"),
                 (self._act_redo, "fa5s.redo"),
+                (self._act_locate_struct, "fa5s.crosshairs"),
                 (self._act_search, "fa5s.search"),
                 (self._act_checksum, "fa5s.file-signature"),
                 (self._act_compare, "fa5s.columns"),
@@ -194,10 +249,13 @@ class MainWindow(QMainWindow):
                 (self._act_export, "fa5s.file-export"),
                 (self._act_convert, "fa5s.exchange-alt"),
                 (self._act_goto, "fa5s.location-arrow"),
+                (self._act_disasm, "fa5s.code-branch"),
                 (self._act_show_search, "fa5s.search"),
                 (self._act_show_struct, "fa5s.sitemap"),
                 (self._act_show_bm, "fa5s.bookmark"),
                 (self._act_show_script, "fa5s.code"),
+                (self._act_show_byte_tools, "fa5s.fill"),
+                (self._act_show_disasm, "fa5s.code-branch"),
                 (self._act_show_all, "fa5s.window-maximize"),
                 (self._act_open_settings, "fa5s.cog"),
                 (self._act_about, "fa5s.info-circle"),
@@ -209,12 +267,15 @@ class MainWindow(QMainWindow):
         self._menu_file.setTitle(tr("menu.file"))
         self._act_new.setText(tr("action.new"))
         self._act_open.setText(tr("action.open"))
+        self._act_open_process.setText(tr("action.open_process"))
+        self._act_open_disk.setText(tr("action.open_disk"))
         self._act_save.setText(tr("action.save"))
         self._act_save_as.setText(tr("action.save_as"))
         self._act_exit.setText(tr("action.exit"))
         self._menu_edit.setTitle(tr("menu.edit"))
         self._act_undo.setText(tr("action.undo"))
         self._act_redo.setText(tr("action.redo"))
+        self._act_locate_struct.setText(tr("action.locate_struct"))
         self._menu_tools.setTitle(tr("menu.tools"))
         self._act_search.setText(tr("action.search"))
         self._act_checksum.setText(tr("action.checksum"))
@@ -223,11 +284,14 @@ class MainWindow(QMainWindow):
         self._act_export.setText(tr("action.export_sel"))
         self._act_convert.setText(tr("action.convert"))
         self._act_goto.setText(tr("action.goto"))
+        self._act_disasm.setText(tr("action.disasm_panel"))
         self._menu_win.setTitle(tr("menu.window"))
         self._act_show_search.setText(tr("action.show_search"))
         self._act_show_struct.setText(tr("action.show_struct"))
         self._act_show_bm.setText(tr("action.show_bookmark"))
         self._act_show_script.setText(tr("action.show_script"))
+        self._act_show_byte_tools.setText(tr("action.show_byte_tools"))
+        self._act_show_disasm.setText(tr("action.show_disasm"))
         self._act_show_all.setText(tr("action.show_all_docks"))
         self._menu_settings.setTitle(tr("menu.settings"))
         self._act_open_settings.setText(tr("action.open_settings"))
@@ -238,6 +302,8 @@ class MainWindow(QMainWindow):
         self._struct_dock.retranslate_ui()
         self._bookmark_dock.retranslate_ui()
         self._script_dock.retranslate_ui()
+        self._byte_tools_dock.retranslate_ui()
+        self._disasm_dock.retranslate_ui()
 
         for i in range(self._tabs.count()):
             w = self._tabs.widget(i)
@@ -296,7 +362,62 @@ class MainWindow(QMainWindow):
         doc.hex_view().selection_changed.connect(
             lambda *a, d=doc: self._on_doc_cursor(d)
         )
+        doc.hex_view().hover_byte_changed.connect(
+            lambda idx, d=doc: self._on_hex_hover_byte(d, idx)
+        )
         self._bind_docks()
+
+    def _on_hex_hover_byte(self, doc: DocumentEditor, idx: int) -> None:
+        if self.current_editor() is not doc:
+            return
+        canvas = doc.hex_view().widget()
+        if idx < 0:
+            canvas.setToolTip("")
+            return
+        path = self._struct_dock.field_path_at_offset(idx)
+        canvas.setToolTip(path if path else "")
+
+    def _on_struct_tree_changed(self) -> None:
+        doc = self.current_editor()
+        if doc is not None:
+            self._sync_struct_visuals(doc)
+
+    def _sync_struct_visuals(self, doc: DocumentEditor) -> None:
+        hv = doc.hex_view()
+        off = hv.cursor_position()
+        rng = self._struct_dock.field_range_at_offset(off)
+        if rng is None:
+            hv.clear_structure_range()
+        else:
+            hv.set_structure_range(rng[0], rng[1])
+
+    def _maybe_auto_load_template(self) -> None:
+        if not QSettings().value("structure/auto_apply_on_open", True, type=bool):
+            return
+        raw = QSettings().value("structure/last_template_path", "")
+        path = raw if isinstance(raw, str) else ""
+        if not path or not Path(path).is_file():
+            return
+        self._struct_dock.try_load_template_path(path, silent=True)
+
+    def _apply_auto_template_for_open(self, doc: DocumentEditor) -> None:
+        """优先按扩展名/Magic 规则加载模板，否则回退为上次模板路径。"""
+        s = QSettings()
+        if s.value("structure/auto_rules_enabled", True, type=bool):
+            raw = s.value("structure/auto_rules_text", "")
+            text = raw if isinstance(raw, str) else ""
+            if text.strip():
+                rules, errs = parse_rules_text(text)
+                if not errs and rules:
+                    fp = doc.model().file_path
+                    p = Path(fp) if fp else None
+                    n = len(doc.model())
+                    head = doc.model().read(0, min(512, n)) if n else b""
+                    tpl = match_auto_template(p, head, rules)
+                    if tpl and Path(tpl).is_file():
+                        self._struct_dock.try_load_template_path(tpl, silent=True)
+                        return
+        self._maybe_auto_load_template()
 
     def _on_doc_data_changed(self, doc: DocumentEditor) -> None:
         if self.current_editor() is doc:
@@ -309,6 +430,7 @@ class MainWindow(QMainWindow):
     def _on_doc_cursor(self, doc: DocumentEditor) -> None:
         if self.current_editor() is doc:
             self._refresh_status(doc)
+            self._sync_struct_visuals(doc)
 
     def _bind_docks(self, _index: int = -1) -> None:
         doc = self.current_editor()
@@ -318,7 +440,10 @@ class MainWindow(QMainWindow):
         self._struct_dock.bind_document(doc)
         self._bookmark_dock.bind_document(doc)
         self._script_dock.bind_document(doc)
+        self._byte_tools_dock.bind_document(doc)
+        self._disasm_dock.bind_document(doc)
         self._refresh_status(doc)
+        self._sync_struct_visuals(doc)
 
     def _close_tab(self, index: int, *, repopulate_if_empty: bool = True) -> None:
         """关闭标签。退出程序时 repopulate_if_empty=False，避免删完又自动新建导致无法退出。"""
@@ -336,6 +461,8 @@ class MainWindow(QMainWindow):
                 self._tabs.setCurrentIndex(index)
                 if not self._save_file():
                     return
+        if isinstance(w, DocumentEditor):
+            w.external_close()
         self._tabs.removeTab(index)
         if self._tabs.count() == 0 and repopulate_if_empty:
             self._new_tab()
@@ -365,11 +492,96 @@ class MainWindow(QMainWindow):
         self._tabs.setCurrentWidget(doc)
         self._wire_document(doc)
         doc.hex_view().refresh_display()
+        self._apply_auto_template_for_open(doc)
+
+    def _show_disasm_dock(self) -> None:
+        self._show_dock(self._disasm_dock)
+
+    def _open_process_memory(self) -> None:
+        if not win_memory.is_windows():
+            QMessageBox.information(
+                self, tr("open_process.title"), tr("open_process.win_only")
+            )
+            return
+        dlg = OpenProcessDialog(self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        try:
+            pid, base, size = dlg.values()
+        except ValueError:
+            QMessageBox.warning(
+                self, tr("open_process.title"), tr("open_process.bad_base")
+            )
+            return
+        try:
+            h = win_memory.open_process(pid)
+            data = win_memory.read_process_memory(h, base, size)
+        except (OSError, ValueError) as e:
+            QMessageBox.warning(self, tr("dlg.open_fail"), str(e))
+            return
+        tab_path = Path(f"proc_{pid}_{base:#x}")
+        doc = DocumentEditor(self._tabs)
+        doc.model().load_bytes(data, tab_path, external_kind="process")
+
+        def flush() -> None:
+            win_memory.write_process_memory(
+                h, base, bytes(doc.model().read(0, len(doc.model())))
+            )
+
+        def close_h() -> None:
+            win_memory.close_handle(h)
+
+        doc.set_external_hooks(flush=flush, close=close_h)
+        self._tabs.addTab(doc, tab_path.name)
+        self._tabs.setCurrentWidget(doc)
+        self._wire_document(doc)
+        doc.hex_view().refresh_display()
+
+    def _open_disk_slice(self) -> None:
+        dlg = OpenDiskDialog(self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        try:
+            path, offset, size = dlg.values()
+        except ValueError:
+            QMessageBox.warning(self, tr("open_disk.title"), tr("open_disk.bad_offset"))
+            return
+        if not path.strip():
+            QMessageBox.warning(self, tr("open_disk.title"), tr("open_disk.bad_path"))
+            return
+        norm = disk_raw.normalize_device_path(path)
+        try:
+            data = disk_raw.read_device_range(norm, offset, size)
+        except (OSError, ValueError) as e:
+            QMessageBox.warning(self, tr("dlg.open_fail"), str(e))
+            return
+        tab_path = disk_raw.display_path_for_tab(norm, offset)
+        doc = DocumentEditor(self._tabs)
+        doc.model().load_bytes(data, tab_path, external_kind="disk_slice")
+
+        def flush() -> None:
+            disk_raw.write_device_range(
+                norm, offset, bytes(doc.model().read(0, len(doc.model())))
+            )
+
+        doc.set_external_hooks(flush=flush, close=lambda: None)
+        self._tabs.addTab(doc, tab_path.name)
+        self._tabs.setCurrentWidget(doc)
+        self._wire_document(doc)
+        doc.hex_view().refresh_display()
 
     def _save_file(self) -> bool:
         doc = self.current_editor()
         if doc is None:
             return False
+        if doc.uses_external_save():
+            try:
+                doc.external_flush()
+                doc.undo_stack().setClean()
+                return True
+            except OSError as e:
+                QMessageBox.warning(self, tr("dlg.save_fail"), str(e))
+                return False
         p = doc.model().file_path
         if p is None:
             return self._save_file_as()
@@ -385,6 +597,19 @@ class MainWindow(QMainWindow):
         doc = self.current_editor()
         if doc is None:
             return False
+        # 进程/磁盘切片：另存为仅导出副本，不改变当前会话与写回目标
+        if doc.model().external_kind is not None:
+            path, _ = QFileDialog.getSaveFileName(
+                self, tr("dlg.export_slice"), "", tr("dlg.all_files")
+            )
+            if not path:
+                return False
+            try:
+                Path(path).write_bytes(doc.model().read(0, len(doc.model())))
+            except OSError as e:
+                QMessageBox.warning(self, tr("dlg.save_fail"), str(e))
+                return False
+            return True
         path, _ = QFileDialog.getSaveFileName(
             self, tr("dlg.save_as"), "", tr("dlg.all_files")
         )
@@ -519,6 +744,20 @@ class MainWindow(QMainWindow):
         except Exception as e:  # noqa: BLE001
             QMessageBox.warning(self, tr("dlg.goto"), str(e))
 
+    def _locate_struct_from_cursor(self) -> None:
+        """根据当前十六进制光标在结构树中选中对应字段（对齐 010「Jump to Template Variable」）。"""
+        doc = self.current_editor()
+        if doc is None:
+            return
+        self._show_dock(self._struct_dock)
+        off = doc.hex_view().cursor_position()
+        if not self._struct_dock.locate_field_at_offset(off):
+            QMessageBox.information(
+                self,
+                tr("struct.warn_title"),
+                tr("struct.locate_not_found"),
+            )
+
     def _show_dock(self, dock: QWidget) -> None:
         dock.show()
         dock.raise_()
@@ -530,6 +769,8 @@ class MainWindow(QMainWindow):
             self._struct_dock,
             self._bookmark_dock,
             self._script_dock,
+            self._byte_tools_dock,
+            self._disasm_dock,
         ):
             d.show()
             d.raise_()

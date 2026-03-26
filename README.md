@@ -1,11 +1,22 @@
 # FreeOrBit
 
-基于 PySide6 的十六进制 / 二进制编辑器（开发中）。
+基于 **PySide6** 的十六进制 / 二进制编辑器，面向逆向、固件与数据分析场景。支持大文件（`mmap`）、多标签、暗色主题、中英文界面。
+
+## 功能概览
+
+| 类别 | 说明 |
+|------|------|
+| **编辑** | 十六进制 / ASCII 视图、插入/覆盖、撤销重做、跳转、书签、搜索高亮 |
+| **搜索** | 十六进制模式；支持 `??` 单字节通配（如 `48??6C`） |
+| **结构模板** | Python 模板：`build_field_tree(model)` → `FieldNode` 树；标量 `dtype` 写回；`builders` 辅助；内置模板（如 PE DOS 头）；扩展名 / Magic 自动匹配（设置中可配） |
+| **脚本** | 受限 `EditorAPI`（`read` / `write` / `cursor` / `message` 等），见文档 |
+| **工具** | 反汇编（Capstone，多架构）、填充/字节运算、文件比较、校验和 |
+| **平台** | **Windows**：打开进程内存、原始磁盘/卷（需管理员）；其它平台以文件编辑为主 |
 
 ## 运行要求
 
 - Python 3.10+
-- 依赖见 `pyproject.toml`（PySide6、qt-material、QtAwesome）
+- 依赖见 [`pyproject.toml`](pyproject.toml)：`PySide6`、`qt-material`、`QtAwesome`、`capstone`
 
 ## 从源码运行
 
@@ -16,19 +27,23 @@ pip install -e ".[dev]"
 python main.py
 ```
 
-或使用模块方式（需已将 `src` 加入 `PYTHONPATH` 或已安装包）：
+或（已安装包或将 `src` 加入 `PYTHONPATH`）：
 
 ```bash
 python -m freeorbit
 ```
 
-## 脚本 API
+## 文档
 
-用户脚本的全局 API 说明见根目录 [`python_script_api.html`](python_script_api.html)。
+| 文档 | 说明 |
+|------|------|
+| [`python_script_api.html`](python_script_api.html) | 脚本面板 API（`editor`、受限 `__builtins__`） |
+| [`python_template.html`](python_template.html) | 结构模板（Python）编写指南 |
+| [`Scheme.md`](Scheme.md) | 产品策划、与 010 Editor 对照、已实现能力清单 |
 
-## 打包（Windows）
+## 打包（Windows，Nuitka 单文件）
 
-先安装项目依赖（含 PySide6、qt-material 等），再安装 Nuitka：
+先安装依赖与 Nuitka：
 
 ```bash
 pip install -e .
@@ -41,17 +56,17 @@ pip install nuitka ordered-set zstandard
 .\build_nuitka.ps1
 ```
 
-生成的单文件可执行文件为 `build/FreeOrBit.exe`。脚本默认关闭 onefile 载荷压缩，以降低打包阶段内存占用；若需更小体积且内存充足，可编辑 `build_nuitka.ps1` 去掉 `--onefile-no-compression`。
+输出：`build/FreeOrBit.exe`。脚本默认启用 **onefile 内压缩**（体积较小）；若打包或首次解压时内存不足，可使用：
+
+```powershell
+.\build_nuitka.ps1 -OneFileNoCompression
+```
+
+打包说明（资源路径、图标、`QSettings` 行为等）见 [`build_nuitka.ps1`](build_nuitka.ps1) 顶部注释。
 
 ### Windows「智能应用控制」/ SmartScreen 提示未知发布者
 
-本地 Nuitka 打出的 `FreeOrBit.exe`**未经过代码签名**，Windows 可能显示「不知道发布者」「不是熟悉的应用」并拦截。这是系统对**未建立信誉的未签名程序**的常规策略，与 PySide6/Nuitka 本身无关。
-
-**临时在本机运行**：在拦截界面上点「更多信息」或「仍要运行」（具体文案因 Windows 版本而异），即可启动。
-
-**正式对外分发**（减少用户看到红/黄提示）：使用由**受信任 CA 颁发的代码签名证书**，在构建完成后对 `FreeOrBit.exe` 做 **Authenticode 签名**（常用工具：`signtool.exe`，需安装 Windows SDK）。扩展验证（EV）证书通常能更快获得 SmartScreen 信任，但需向证书厂商购买并按流程验证身份。
-
-**注意**：自签名证书一般**不能**消除 SmartScreen 的发布者警告，仅适合内网或自用场景。
+本地构建的 `FreeOrBit.exe`**未经过代码签名**，系统可能提示「未知发布者」。可在拦截界面选择「更多信息」→「仍要运行」。正式对外分发需使用 **Authenticode 代码签名证书**（如 `signtool.exe`）；自签名证书通常无法消除此类提示。
 
 ## 许可
 

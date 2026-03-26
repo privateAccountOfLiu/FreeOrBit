@@ -14,3 +14,6 @@ __pycache__/
 
 # 虚拟环境
 .venv/
+
+# 本地临时文件
+.write_test

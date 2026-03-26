@@ -1,28 +1,28 @@
 # FreeOrBit Nuitka 单文件打包（Windows）
 #
-# 依赖: pip install nuitka ordered-set zstandard
+# 依赖: pip install -e . ; pip install nuitka ordered-set zstandard
 # 输出: ./build/FreeOrBit.exe
 #
-# --- 体积优化（在不影响功能的前提下尽量缩小）---
-# - 默认启用 onefile 内压缩（较 --onefile-no-compression 明显更小；首次运行解压略多占内存）。
-# - --lto=yes：链接期优化（编译略慢，可略减体积/略提运行性能）。
-# - --python-flag=-O：去除 assert 等，略减字节码体积。
-# - --include-package-data=qtawesome：确保图标字体等资源打入（与「缩小」不矛盾，避免缺文件）。
+# --- 体积与性能（在功能完整的前提下尽量缩小）---
+# - 默认启用 onefile 内压缩（较 -OneFileNoCompression 明显更小；首次运行解压略多占内存）。
+# - --lto=yes：链接期优化。
+# - --python-flag=-O：去除 assert，略减字节码体积。
+# - --enable-plugin=anti-bloat：避免打入 pytest 等测试栈。
+# - --include-package=capstone + --include-package-data=capstone：反汇编依赖 capstone 及 lib 下原生 DLL。
+# - --nofollow-import-to=*.tests：跳过依赖树中的 tests 子包（若被间接引用）。
+# - --include-package-data=qt_material / qtawesome：主题与图标字体。
 #
-# 若打包或运行解压时内存不足，请使用：
+# 若打包或运行解压时内存不足，请使用:
 #   .\build_nuitka.ps1 -OneFileNoCompression
 #
-# --- i18n / 配置 / 资源路径（Nuitka onefile 下）---
-# - 界面文案：全部编译进 Python 字节码（freeorbit.i18n），无外部 .json/.qm 语言文件。
-# - QSettings：语言与其它 Qt 设置写入「组织名/应用名」对应位置（Windows 通常为注册表或
-#   %APPDATA%，由 QApplication 的 organizationName/applicationName 决定），与 exe 所在路径、
-#   onefile 临时解压目录无关；升级或移动安装包不会丢失语言偏好（除非清注册表/配置）。
-# - 窗口图标：通过 --include-data-files 安装到包内 freeorbit/resources/FreeOrBit.ico，
-#   运行时由 icon_assets.app_icon() 用 freeorbit.__file__ 解析，与 frozen/开发一致。
-# - 用户数据（打开/保存的文件）仍为用户自选路径，与打包无关。
+# --- 静态资源与路径（Nuitka onefile）---
+# - 界面文案：编译进 freeorbit.i18n，无外部语言文件。
+# - QSettings：与 exe 路径、onefile 临时目录无关（组织名/应用名）。
+# - 窗口图标：根目录 FreeOrBit.ico + 包内 src\freeorbit\resources\FreeOrBit.ico 通过 --include-data-files
+#   映射到 freeorbit/resources/FreeOrBit.ico，与 icon_assets.app_icon() 一致。
+# - 内置模板：随 --include-package=freeorbit 打入 resources/templates/*.py（与 pyproject package-data 一致）。
 #
 param(
-    # 禁用 onefile 内压缩：exe 更大，但解压峰值内存更低（旧环境曾 OOM 时可开）
     [switch]$OneFileNoCompression
 )
 
@@ -46,6 +46,7 @@ $NuitkaArgs = @(
     "-m", "nuitka",
     "main.py",
     "--assume-yes-for-downloads",
+    "--remove-output",
     "--onefile",
     "--output-dir=build",
     "--output-filename=FreeOrBit.exe",
@@ -54,12 +55,17 @@ $NuitkaArgs = @(
     "--show-progress",
     "--lto=yes",
     "--python-flag=-O",
-    "--enable-plugins=pyside6",
+    "--enable-plugins=pyside6,anti-bloat",
+    "--noinclude-pytest-mode=nofollow",
+    "--noinclude-unittest-mode=nofollow",
+    '--nofollow-import-to=*.tests',
     "--include-package=freeorbit",
     "--include-package=qt_material",
     "--include-package=qtawesome",
+    "--include-package=capstone",
     "--include-package-data=qt_material",
     "--include-package-data=qtawesome",
+    "--include-package-data=capstone",
     "--include-data-files=$DataIco=freeorbit/resources/FreeOrBit.ico"
 )
 

@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import mmap
 from pathlib import Path
-from typing import BinaryIO, Optional
+from typing import BinaryIO, Literal, Optional
 
 from PySide6.QtCore import QObject, Signal
+
+ExternalKind = Literal["process", "disk_slice"]
 
 
 class BinaryDataModel(QObject):
@@ -27,6 +29,16 @@ class BinaryDataModel(QObject):
         self._mmap_file: Optional[BinaryIO] = None
         self._use_mmap = False
         self._modified = False
+        # 进程内存 / 磁盘切片等：不允许插入删除（长度固定），仅覆盖
+        self._external_kind: Optional[ExternalKind] = None
+
+    @property
+    def external_kind(self) -> Optional[ExternalKind]:
+        return self._external_kind
+
+    @property
+    def allows_resize(self) -> bool:
+        return self._external_kind is None
 
     @property
     def file_path(self) -> Optional[Path]:
@@ -68,6 +80,7 @@ class BinaryDataModel(QObject):
         self._close_mmap()
         self._buffer = bytearray()
         self._path = None
+        self._external_kind = None
         self._set_modified(False)
         self.file_path_changed.emit()
         self.data_changed.emit(0, 0)
@@ -105,14 +118,22 @@ class BinaryDataModel(QObject):
             self._use_mmap = False
 
         self._path = p
+        self._external_kind = None
         self._set_modified(False)
         self.file_path_changed.emit()
         self.data_changed.emit(0, len(self))
 
-    def load_bytes(self, data: bytes, path: Optional[Path] = None) -> None:
+    def load_bytes(
+        self,
+        data: bytes,
+        path: Optional[Path] = None,
+        *,
+        external_kind: Optional[ExternalKind] = None,
+    ) -> None:
         self._close_mmap()
         self._buffer = bytearray(data)
         self._path = path
+        self._external_kind = external_kind
         self._set_modified(False)
         self.file_path_changed.emit()
         self.data_changed.emit(0, len(self))
@@ -150,6 +171,8 @@ class BinaryDataModel(QObject):
         self.data_changed.emit(offset, n)
 
     def insert_at(self, offset: int, data: bytes, *, mark_modified: bool = True) -> None:
+        if self._external_kind:
+            raise RuntimeError("fixed_length_external")
         if self._use_mmap:
             self.ensure_mutable_copy()
         if offset < 0 or offset > len(self._buffer):
@@ -160,6 +183,8 @@ class BinaryDataModel(QObject):
         self.data_changed.emit(offset, len(self._buffer) - offset)
 
     def delete_range(self, offset: int, count: int, *, mark_modified: bool = True) -> None:
+        if self._external_kind:
+            raise RuntimeError("fixed_length_external")
         if self._use_mmap:
             self.ensure_mutable_copy()
         if count <= 0:

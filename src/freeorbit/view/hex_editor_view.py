@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional
 
-from PySide6.QtCore import QPoint, Qt, Signal
+from PySide6.QtCore import QEvent, QPoint, Qt, Signal
 from PySide6.QtGui import (
     QColor,
     QFont,
@@ -27,6 +27,8 @@ if TYPE_CHECKING:
 MAX_BYTES_PER_LINE = 16
 # 默认每行字节数（启动与窄视口）
 DEFAULT_BYTES_PER_LINE = 8
+# Qt 单维控件像素上限；超过时 setFixedSize 会告警且布局异常
+_QT_WIDGET_MAX_PX = 16777215
 
 
 def _byte_to_ascii(b: int) -> str:
@@ -57,12 +59,18 @@ class _HexCanvas(QWidget):
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         self._editor._mouse_release(event)
 
+    def leaveEvent(self, event: QEvent) -> None:
+        super().leaveEvent(event)
+        self._editor._canvas_leave()
+
 
 class HexEditorView(QScrollArea):
     """显示十六进制 + ASCII。"""
 
     cursor_moved = Signal(int)
     selection_changed = Signal(int, int)
+    # 鼠标悬停的字节偏移；-1 表示离开画布
+    hover_byte_changed = Signal(int)
     # 画布上请求上下文菜单时的全局坐标（用于 QMenu.exec）
     context_menu_requested = Signal(QPoint)
 
@@ -89,6 +97,9 @@ class HexEditorView(QScrollArea):
         self._search_hits: set[int] = set()
         # 逐字节比较着色：None 关闭；1=相同(绿) 2=不同(红)
         self._compare_highlights: Optional[list[int]] = None
+        # 结构模板字段范围 [start, start+length) 高亮（对齐 010 struct outlining 的轻量版）
+        self._struct_range: tuple[int, int] | None = None
+        self._hover_idx: int = -1
 
         self.setFont(self._font)
         self._canvas = _HexCanvas(self)
@@ -138,6 +149,7 @@ class HexEditorView(QScrollArea):
             model.data_changed.connect(self._on_data_changed)
         self._cursor_pos = 0
         self._anchor = None
+        self._struct_range = None
         self.refresh_display()
 
     def model(self) -> Optional[BinaryDataModel]:
@@ -149,6 +161,18 @@ class HexEditorView(QScrollArea):
 
     def clear_search_hits(self) -> None:
         self._search_hits.clear()
+        self._canvas.update()
+
+    def set_structure_range(self, start: int, length: int) -> None:
+        """高亮结构字段覆盖的字节范围（半透明显示）。"""
+        if length <= 0:
+            self._struct_range = None
+        else:
+            self._struct_range = (start, length)
+        self._canvas.update()
+
+    def clear_structure_range(self) -> None:
+        self._struct_range = None
         self._canvas.update()
 
     def set_compare_highlights(self, highlights: Optional[list[int]]) -> None:
@@ -310,7 +334,10 @@ class HexEditorView(QScrollArea):
             n = len(self._model)
             total_rows = max(1, (n + self._bytes_per_line - 1) // self._bytes_per_line)
             h = total_rows * self._row_height
-        self._canvas.setFixedSize(self._paint_width, max(self._row_height, h))
+        h = max(self._row_height, h)
+        h = min(h, _QT_WIDGET_MAX_PX)
+        w = min(max(self._paint_width, 1), _QT_WIDGET_MAX_PX)
+        self._canvas.setFixedSize(w, h)
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
@@ -349,6 +376,7 @@ class HexEditorView(QScrollArea):
         hit_c = QColor(255, 200, 0, 80)
         cmp_same = QColor(0, 170, 0, 85)
         cmp_diff = QColor(230, 50, 50, 100)
+        struct_bg = QColor(0, 130, 180, 58)
 
         total = len(self._model)
         digits = self._addr_digits()
@@ -384,6 +412,20 @@ class HexEditorView(QScrollArea):
                 b = self._model.read_byte(idx)
                 x_hex = self._hex_draw_left + col * hex_cell
                 ax = self._ascii_area_left + col * cw
+
+                in_struct = False
+                if self._struct_range is not None:
+                    s0, slen = self._struct_range
+                    in_struct = s0 <= idx < s0 + slen
+                if in_struct:
+                    p.fillRect(
+                        x_hex - 2,
+                        y_base,
+                        cell_w,
+                        self._row_height,
+                        struct_bg,
+                    )
+                    p.fillRect(ax - 1, y_base, cw + 2, self._row_height, struct_bg)
 
                 if self._compare_highlights is not None and idx < len(self._compare_highlights):
                     ch = self._compare_highlights[idx]
@@ -536,6 +578,26 @@ class HexEditorView(QScrollArea):
                 self._canvas.update()
                 self.cursor_moved.emit(self._cursor_pos)
                 self._emit_selection()
+            return
+        self._update_hover_from_point(event.position().toPoint())
+
+    def _canvas_leave(self) -> None:
+        if self._hover_idx != -1:
+            self._hover_idx = -1
+            self.hover_byte_changed.emit(-1)
+
+    def _update_hover_from_point(self, pt: QPoint) -> None:
+        if self._model is None:
+            return
+        area, idx = self._byte_at_point(pt)
+        if idx >= 0 and idx < len(self._model):
+            if idx != self._hover_idx:
+                self._hover_idx = idx
+                self.hover_byte_changed.emit(idx)
+        else:
+            if self._hover_idx != -1:
+                self._hover_idx = -1
+                self.hover_byte_changed.emit(-1)
 
     def _mouse_release(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
