@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMessageBox,
     QPlainTextEdit,
     QStackedWidget,
@@ -24,6 +25,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from freeorbit.platform import android_settings as android_st
+from freeorbit.platform import frida_loader
 from freeorbit.template.auto_template import parse_rules_text
 
 from freeorbit.i18n import _LANG_EN, _LANG_ZH, current_language, set_language, tr
@@ -40,9 +43,11 @@ class SettingsDialog(QDialog):
         parent: QWidget | None = None,
         *,
         on_apply_lang: Optional[Callable[[], None]] = None,
+        on_android_settings_changed: Optional[Callable[[], None]] = None,
     ) -> None:
         super().__init__(parent)
         self._on_apply_lang = on_apply_lang
+        self._on_android_settings_changed = on_android_settings_changed
         self._lang_combo: Optional[QComboBox] = None
         self._breadcrumb: Optional[QLabel] = None
         self._tree: Optional[QTreeWidget] = None
@@ -58,6 +63,18 @@ class SettingsDialog(QDialog):
         self._breadcrumb_perm: Optional[QLabel] = None
         self._chk_admin_launch: Optional[QCheckBox] = None
         self._lbl_perm_hint: Optional[QLabel] = None
+        self._page_android: Optional[QWidget] = None
+        self._breadcrumb_android: Optional[QLabel] = None
+        self._android_adb: Optional[QLineEdit] = None
+        self._android_frida_remote: Optional[QLineEdit] = None
+        self._android_frida_server_path: Optional[QLineEdit] = None
+        self._android_frida_major: Optional[QLineEdit] = None
+        self._chk_android_warn_ver: Optional[QCheckBox] = None
+        self._chk_android_frida_use_pip: Optional[QCheckBox] = None
+        self._lbl_frida_pip_site_row: Optional[QLabel] = None
+        self._android_frida_pip_site: Optional[QLineEdit] = None
+        self._lbl_android_frida_py: Optional[QLabel] = None
+        self._lbl_android_frida_hint: Optional[QLabel] = None
         self._btn_box: Optional[QDialogButtonBox] = None
         self._build_ui()
         self._apply_retranslate()
@@ -140,6 +157,53 @@ class SettingsDialog(QDialog):
         self._stack.addWidget(self._page_perm)
         self._apply_perm_platform_state()
 
+        self._page_android = QWidget()
+        lay_and = QVBoxLayout(self._page_android)
+        self._breadcrumb_android = QLabel()
+        self._breadcrumb_android.setWordWrap(True)
+        self._breadcrumb_android.setStyleSheet("color: palette(mid); padding-bottom: 8px;")
+        lay_and.addWidget(self._breadcrumb_android)
+        form_and = QFormLayout()
+        self._android_adb = QLineEdit()
+        self._android_adb.setText(android_st.adb_path())
+        self._lbl_adb_row = QLabel()
+        form_and.addRow(self._lbl_adb_row, self._android_adb)
+        self._android_frida_remote = QLineEdit()
+        self._android_frida_remote.setText(android_st.frida_remote_host())
+        self._lbl_frida_remote_row = QLabel()
+        form_and.addRow(self._lbl_frida_remote_row, self._android_frida_remote)
+        self._android_frida_server_path = QLineEdit()
+        self._android_frida_server_path.setText(android_st.frida_server_device_path())
+        self._lbl_frida_srv_row = QLabel()
+        form_and.addRow(self._lbl_frida_srv_row, self._android_frida_server_path)
+        self._android_frida_major = QLineEdit()
+        self._android_frida_major.setText(android_st.frida_expected_major())
+        self._lbl_frida_major_row = QLabel()
+        form_and.addRow(self._lbl_frida_major_row, self._android_frida_major)
+        self._chk_android_frida_use_pip = QCheckBox()
+        self._chk_android_frida_use_pip.setChecked(android_st.frida_use_pip_env())
+        form_and.addRow(self._chk_android_frida_use_pip)
+        self._lbl_frida_pip_site_row = QLabel()
+        self._android_frida_pip_site = QLineEdit()
+        self._android_frida_pip_site.setText(android_st.frida_pip_site_packages())
+        form_and.addRow(self._lbl_frida_pip_site_row, self._android_frida_pip_site)
+        self._chk_android_frida_use_pip.toggled.connect(self._on_frida_use_pip_toggled)
+        self._on_frida_use_pip_toggled(self._chk_android_frida_use_pip.isChecked())
+        lay_and.addLayout(form_and)
+        self._chk_android_warn_ver = QCheckBox()
+        self._chk_android_warn_ver.setChecked(android_st.frida_warn_version_mismatch())
+        lay_and.addWidget(self._chk_android_warn_ver)
+        self._lbl_android_frida_py = QLabel()
+        self._lbl_android_frida_py.setWordWrap(True)
+        lay_and.addWidget(self._lbl_android_frida_py)
+        self._lbl_android_frida_hint = QLabel()
+        self._lbl_android_frida_hint.setWordWrap(True)
+        self._lbl_android_frida_hint.setStyleSheet("color: palette(mid);")
+        lay_and.addWidget(self._lbl_android_frida_hint)
+        lay_and.addStretch(1)
+        self._stack.addWidget(self._page_android)
+        self._refresh_android_version_label()
+
         body.addWidget(self._tree)
         body.addWidget(self._stack, 1)
 
@@ -159,6 +223,10 @@ class SettingsDialog(QDialog):
 
         self._populate_tree()
         self._tree.currentItemChanged.connect(self._on_tree_change)
+
+    def _on_frida_use_pip_toggled(self, checked: bool) -> None:
+        if self._android_frida_pip_site is not None:
+            self._android_frida_pip_site.setEnabled(checked)
 
     def _apply_perm_platform_state(self) -> None:
         """非 Windows 下禁用提权选项。"""
@@ -184,6 +252,9 @@ class SettingsDialog(QDialog):
             perm_item = QTreeWidgetItem([tr("settings.tree.elevation")])
             perm_item.setData(0, Qt.ItemDataRole.UserRole, 2)
             sys_item.addChild(perm_item)
+            android_item = QTreeWidgetItem([tr("settings.tree.android")])
+            android_item.setData(0, Qt.ItemDataRole.UserRole, 3)
+            sys_item.addChild(android_item)
             root_item.addChild(sys_item)
             self._tree.addTopLevelItem(root_item)
             root_item.setExpanded(True)
@@ -247,6 +318,96 @@ class SettingsDialog(QDialog):
             else:
                 self._lbl_perm_hint.setText(tr("settings.elevation.unix_hint"))
         self._apply_perm_platform_state()
+        self._apply_android_labels()
+
+    def _refresh_android_version_label(self) -> None:
+        if self._lbl_android_frida_py is None:
+            return
+        v = android_st.python_frida_version()
+        if v is None:
+            self._lbl_android_frida_py.setText(tr("settings.android.frida_not_installed"))
+        else:
+            self._lbl_android_frida_py.setText(
+                tr("settings.android.frida_py_version").format(v=v)
+            )
+
+    def _apply_android_labels(self) -> None:
+        if self._breadcrumb_android is not None:
+            self._breadcrumb_android.setText(tr("settings.android.breadcrumb"))
+        if self._lbl_adb_row is not None:
+            self._lbl_adb_row.setText(tr("settings.android.adb_path"))
+        if self._lbl_frida_remote_row is not None:
+            self._lbl_frida_remote_row.setText(tr("settings.android.frida_remote"))
+        if self._android_frida_remote is not None:
+            self._android_frida_remote.setPlaceholderText(
+                tr("settings.android.frida_remote_ph")
+            )
+        if self._lbl_frida_srv_row is not None:
+            self._lbl_frida_srv_row.setText(tr("settings.android.frida_server_path"))
+        if self._android_frida_server_path is not None:
+            self._android_frida_server_path.setPlaceholderText(
+                tr("settings.android.frida_server_ph")
+            )
+        if self._lbl_frida_major_row is not None:
+            self._lbl_frida_major_row.setText(tr("settings.android.frida_expected_major"))
+        if self._android_frida_major is not None:
+            self._android_frida_major.setPlaceholderText(
+                tr("settings.android.frida_major_ph")
+            )
+        if self._chk_android_warn_ver is not None:
+            self._chk_android_warn_ver.setText(tr("settings.android.warn_version"))
+        if self._chk_android_frida_use_pip is not None:
+            self._chk_android_frida_use_pip.setText(tr("settings.android.frida_use_pip"))
+        if self._lbl_frida_pip_site_row is not None:
+            self._lbl_frida_pip_site_row.setText(tr("settings.android.frida_pip_site_packages"))
+        if self._android_frida_pip_site is not None:
+            self._android_frida_pip_site.setPlaceholderText(
+                tr("settings.android.frida_pip_site_packages_ph")
+            )
+        if self._lbl_android_frida_hint is not None:
+            self._lbl_android_frida_hint.setText(tr("settings.android.frida_hint"))
+        self._refresh_android_version_label()
+
+    def _save_android_settings(self) -> None:
+        if self._android_adb is not None:
+            QSettings().setValue(
+                "android/adb_path",
+                self._android_adb.text().strip() or "adb",
+            )
+        if self._android_frida_remote is not None:
+            QSettings().setValue(
+                "android/frida_remote_host",
+                self._android_frida_remote.text().strip(),
+            )
+        if self._android_frida_server_path is not None:
+            QSettings().setValue(
+                "android/frida_server_device_path",
+                self._android_frida_server_path.text().strip()
+                or "/data/local/tmp/frida-server",
+            )
+        if self._android_frida_major is not None:
+            QSettings().setValue(
+                "android/frida_expected_major",
+                self._android_frida_major.text().strip(),
+            )
+        if self._chk_android_warn_ver is not None:
+            QSettings().setValue(
+                "android/frida_warn_version_mismatch",
+                self._chk_android_warn_ver.isChecked(),
+            )
+        if self._chk_android_frida_use_pip is not None:
+            QSettings().setValue(
+                "android/frida_use_pip_env",
+                self._chk_android_frida_use_pip.isChecked(),
+            )
+        if self._android_frida_pip_site is not None:
+            QSettings().setValue(
+                "android/frida_pip_site_packages",
+                self._android_frida_pip_site.text().strip(),
+            )
+        frida_loader.reset_frida_import_config()
+        frida_loader.ensure_frida_import_preference()
+        self._refresh_android_version_label()
 
     def _save_elevation_settings(self) -> None:
         if self._chk_admin_launch is not None and sys.platform == "win32":
@@ -294,12 +455,18 @@ class SettingsDialog(QDialog):
             if self._on_apply_lang:
                 self._on_apply_lang()
 
+    def _notify_android_settings_changed(self) -> None:
+        if self._on_android_settings_changed is not None:
+            self._on_android_settings_changed()
+
     def _on_apply_clicked(self) -> None:
         self._apply_language_from_ui()
         if not self._validate_structure_rules():
             return
         self._save_structure_settings()
         self._save_elevation_settings()
+        self._save_android_settings()
+        self._notify_android_settings_changed()
         self._apply_retranslate()
 
     def _on_ok(self) -> None:
@@ -308,4 +475,6 @@ class SettingsDialog(QDialog):
             return
         self._save_structure_settings()
         self._save_elevation_settings()
+        self._save_android_settings()
+        self._notify_android_settings_changed()
         self.accept()

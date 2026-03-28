@@ -64,6 +64,15 @@ class DocumentEditor(QWidget):
         self._process_image_base: Optional[int] = None
         self._process_image_size: Optional[int] = None
         self._process_modules: list[ModuleInfo] = []
+        # 主窗口标签文字覆盖（如 Frida dump 的说明性标题）；为 None 时用 file_path 或「未命名」
+        self._tab_title_override: Optional[str] = None
+
+    def set_tab_title_override(self, title: Optional[str]) -> None:
+        """设置标签页显示名；保存为文件后可置 None 以恢复用文件名。"""
+        self._tab_title_override = title
+
+    def tab_title_override(self) -> Optional[str]:
+        return self._tab_title_override
 
     def set_external_hooks(
         self,

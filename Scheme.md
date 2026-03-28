@@ -409,6 +409,7 @@ def run_script(self, script_code):
 | **大端/小端** 在模板内切换 | 已支持 `u32be` / `u16be` 等与 `*le` 成对 dtype；与 010 `BigEndian()` 部分等价 |
 | 与 **脚本** 双向修改模板变量 | 脚本为受限 API；与结构树未自动联动 |
 | 搜索 **掩码字节**（忽略若干半字节/字节） | **已实现**：搜索框支持 `??` 表示通配一字节（如 `48??6C`）；不支持单 `?` 半字节通配 |
+| **Android 动态插桩 / ADB**（对标 Frida 类能力） | **未实现**（规划见 **§8.7**）：与 Windows 进程内存路径独立；优先复用 Frida 官方栈，而非在应用内自研 Gum 级引擎 |
 
 **已对齐或接近的核心价值**：二进制 ↔ 层次化字段展示、字段值编辑写回、树形导航、Python 生态扩展；适合作为逆向/分析工具链中的一环持续迭代。
 
@@ -474,4 +475,74 @@ def run_script(self, script_code):
 |------|------|
 | **已具备 / 本期对齐** | 进程内存打开与写回、磁盘原始切片、外部缓冲 **F5 刷新**、打开进程对话框内 **VirtualQuery** 辅助可读区、**多模块枚举 + VA 命中**，Hex/状态栏 **「模块名+偏移」**（与 CE 模块+偏移展示一致，Windows）。 |
 | **未纳入（中长期）** | 指针扫描、变速、代码注入、内核驱动级读写等 CE 高级能力；可在后续版本单独立项。 |
+
+### 8.7 Android 动态插桩与 ADB（规划）
+
+本节说明在 **已具备 Windows 进程内存读写**（§8.3）之外，向 **Android 设备** 扩展 **「对标 [Frida](https://frida.re/) 水平的动态插桩」** 时的**技术边界、参考开源栈与分阶段路线**。**不表示**短期内在本仓库内用 Python 重写 [frida-gum](https://github.com/frida/frida-gum) 级 Hook 引擎。
+
+#### 8.7.1 目标与边界
+
+| 要点 | 说明 |
+|------|------|
+| **合法用途** | 面向**授权范围内**的自有应用、安全研究或教学环境；用户须遵守当地法律与平台协议。 |
+| **产品边界** | 策划**不**覆盖协助绕过 DRM、反作弊、付费墙等场景；相关风险与合规由用户自行承担。 |
+| **设备与数据** | **root**、解锁 Bootloader、刷机等可能影响保修与数据安全；**用户自担风险**。 |
+
+#### 8.7.2 ADB 与 Frida 的关系（为何不能「只用 ADB 完成 Hook」）
+
+- **[Android Debug Bridge（adb）](https://developer.android.com/tools/adb)**：主机与设备 `adbd` 之间的**命令、文件传输、端口转发**通道（如 `adb shell`、`adb push`/`pull`、`adb forward`）。可用于部署组件、查看日志、辅助调试，但**不提供**与 Frida 同类的进程内 **inline hook**、**Interceptor**、**Stalker** 等能力。
+- **Frida 能力**来自独立开源栈 + 设备侧服务，而非 ADB 本身：
+  - **[frida-gum](https://github.com/frida/frida-gum)**（C）：插桩核心、`Interceptor`、多架构代码重写、[Stalker](https://frida.re/docs/stalker/) 等。
+  - **[frida-core](https://github.com/frida/frida-core)**：会话、注入、**GumJS** 脚本生命周期与主机协同（实现语言含 Vala 等）。
+  - **设备侧 [frida-server](https://github.com/frida/frida/releases)**：在设备上监听（常见端口 **27042**），主机经 USB 或 TCP 连接。
+- 官方 [Frida — Android](https://frida.re/docs/android/) 说明典型路径为 **已 root 设备**上运行 `frida-server`；**无 root** 时可考虑 **frida-gadget** 嵌入应用等路径（工程复杂度与合规要求更高）。
+
+**结论**：「对标 Frida 水平」应理解为 **能力对标**（附加进程、JS 脚本、Hook、消息通道），实现上**优先复用 Frida 官方组件与 API**（如主机侧 **frida-python**），而非在 FreeOrBit 内重复实现 Gum。
+
+#### 8.7.3 与 FreeOrBit 现有能力的关系
+
+| 维度 | Windows（当前） | Android（规划） |
+|------|-----------------|-----------------|
+| **内存访问** | `ReadProcessMemory` / 打开进程对话框 | 与 Linux/Android、`ptrace`/SELinux、ART/JNI 相关；宜通过 **Frida API** 或受控 dump，而非照搬 Win32 |
+| **产品形态** | 单应用内 Hex + 外部缓冲刷新 | 宜为 **可选子系统**（可选依赖、独立 UI 入口），避免与 Windows 代码强耦合 |
+
+#### 8.7.4 能力分级（路线图）
+
+| 级别 | 内容 | 说明 |
+|------|------|------|
+| **L1** | 主机侧 **ADB 封装** | 设备列表、包名/进程列表、受控 `adb shell`、文件拉取等；与十六进制编辑弱相关，可独立交付。 |
+| **L2** | **frida-python（可选依赖）** | UI 内：附加进程、加载/编辑脚本、展示 **Message** 通道；对齐 Frida CLI 核心工作流（依赖本机/venv 安装 Frida 与设备上 **frida-server** 版本匹配）。 |
+| **L3** | 与 **编辑器联动** | 将指定内存范围经 Frida **dump 到临时缓冲**，在 FreeOrBit 中以 `BinaryDataModel` 打开；需明确 **API 边界**与权限提示。 |
+
+**工程落地（初版）**：已实现 **L1–L3** 最小闭环——主窗口停靠 **「Android / Frida」**（默认隐藏，**窗口**菜单中「显示 Android 调试面板」）；`freeorbit/platform/android_adb.py` 封装 `adb`；`freeorbit/services/android_hook_dock.py` 提供 ADB / Frida / 内存 Dump 三页；Frida 为可选依赖（`pip install -e ".[android]"` 或 `pip install frida`），设备侧需自行部署匹配版本的 **frida-server**。
+
+#### 8.7.5 非目标（显式）
+
+- 短期内不在本仓库用 Python **自研** 与 frida-gum 等价的通用 Hook 引擎。
+- 不承诺 **无 root** 下与 root 设备**同等**功能；不承诺覆盖所有厂商 ROM / 加固应用。
+- 不将 ADB 本身宣传为「Hook 引擎」。
+
+#### 8.7.6 技术风险
+
+| 风险 | 说明 |
+|------|------|
+| **root / SELinux** | 权限不足时注入失败或行为不一致。 |
+| **检测与对抗** | 应用可能检测 `frida-server` 进程、端口或内存特征；需用户自行处理重命名、迁移路径等（参见官方 Android 文档提示）。 |
+| **架构与版本** | 设备 CPU（arm64 / x86_64 等）需匹配 **frida-server** 构建；Frida 与主程序版本需兼容。 |
+| **打包** | 若集成 Python 绑定或附带二进制，**Nuitka onefile** 体积与许可条款需单独评估。 |
+
+#### 8.7.7 许可与依赖
+
+- Frida 各组件许可证以 **[frida/frida](https://github.com/frida/frida)** 及子仓库声明为准（请勿在本文档中写死 SPDX 字符串；集成前由维护者核对分发义务）。
+- FreeOrBit 主工程为 **Apache-2.0**；若捆绑或自动下载 Frida 预构建产物，需在**用户协议/关于**中说明第三方组件及**可选**性质。
+
+#### 8.7.8 外部参考链接（检索摘要）
+
+| 资源 | 用途 |
+|------|------|
+| [frida-gum](https://github.com/frida/frida-gum) | 插桩底层库 |
+| [frida-core](https://github.com/frida/frida-core) | 会话与注入编排 |
+| [Frida Releases](https://github.com/frida/frida/releases) | `frida-server` 预构建二进制 |
+| [Frida — Android](https://frida.re/docs/android/) | 设备准备、`adb` 与 `frida-server` 部署流程 |
+| [Android Developers — adb](https://developer.android.com/tools/adb) | ADB 能力与限制 |
 

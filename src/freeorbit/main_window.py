@@ -32,6 +32,7 @@ from freeorbit.services.checksum_dialog import ChecksumDialog
 from freeorbit.services.disasm_dock import DisasmDock
 from freeorbit.services.compare_view import CompareWindow
 from freeorbit.services.search import SearchDock
+from freeorbit.services.android_debug_window import AndroidDebugWindow
 from freeorbit.services.script_runner import ScriptDock
 from freeorbit.template.auto_template import match_auto_template, parse_rules_text
 from freeorbit.template.structure_dock import StructureDock
@@ -89,8 +90,8 @@ class MainWindow(QMainWindow):
         # 填充/字节运算内容较多，不限制最大高度，由面板内滚动条承载
         self._byte_tools_dock.setMinimumWidth(320)
         self._disasm_dock.setMaximumHeight(320)
-
         self._compare_window: Optional[CompareWindow] = None
+        self._android_debug_window: Optional[AndroidDebugWindow] = None
 
         self._create_menus()
         self._create_toolbar()
@@ -206,6 +207,10 @@ class MainWindow(QMainWindow):
         self._act_orf.triggered.connect(self._open_orf_window)
         self._menu_tools.addAction(self._act_orf)
 
+        self._act_android_debug = QAction(self)
+        self._act_android_debug.triggered.connect(self._open_android_debug)
+        self._menu_tools.addAction(self._act_android_debug)
+
         self._menu_win = mb.addMenu("")
         self._act_show_search = QAction(self)
         self._act_show_search.triggered.connect(
@@ -275,6 +280,7 @@ class MainWindow(QMainWindow):
                 (self._act_goto, "fa5s.location-arrow"),
                 (self._act_disasm, "fa5s.code-branch"),
                 (self._act_orf, "fa5s.dna"),
+                (self._act_android_debug, "fa5s.mobile-alt"),
                 (self._act_show_search, "fa5s.search"),
                 (self._act_show_struct, "fa5s.sitemap"),
                 (self._act_show_bm, "fa5s.bookmark"),
@@ -312,6 +318,7 @@ class MainWindow(QMainWindow):
         self._act_goto.setText(tr("action.goto"))
         self._act_disasm.setText(tr("action.disasm_panel"))
         self._act_orf.setText(tr("action.orf"))
+        self._act_android_debug.setText(tr("action.android_debug"))
         self._menu_win.setTitle(tr("menu.window"))
         self._act_show_search.setText(tr("action.show_search"))
         self._act_show_struct.setText(tr("action.show_struct"))
@@ -331,6 +338,8 @@ class MainWindow(QMainWindow):
         self._script_dock.retranslate_ui()
         self._byte_tools_dock.retranslate_ui()
         self._disasm_dock.retranslate_ui()
+        if self._android_debug_window is not None:
+            self._android_debug_window.retranslate_ui()
 
         for i in range(self._tabs.count()):
             w = self._tabs.widget(i)
@@ -342,8 +351,26 @@ class MainWindow(QMainWindow):
             self._refresh_status(doc)
 
     def _open_settings(self) -> None:
-        dlg = SettingsDialog(self, on_apply_lang=self.retranslate_ui)
+        dlg = SettingsDialog(
+            self,
+            on_apply_lang=self.retranslate_ui,
+            on_android_settings_changed=self._sync_android_debug_settings,
+        )
         dlg.exec()
+
+    def _sync_android_debug_settings(self) -> None:
+        if self._android_debug_window is not None:
+            self._android_debug_window.sync_from_settings()
+
+    def _open_android_debug(self) -> None:
+        if self._android_debug_window is None:
+            self._android_debug_window = AndroidDebugWindow(
+                self,
+                open_buffer_tab=self._open_android_memory_tab,
+            )
+        self._android_debug_window.show()
+        self._android_debug_window.raise_()
+        self._android_debug_window.activateWindow()
 
     def _apply_qtawesome_icons(self, actions: list[tuple[QAction, str]]) -> None:
         """菜单图标：Font Awesome Free，经 QtAwesome 渲染（未安装则跳过）。"""
@@ -371,6 +398,16 @@ class MainWindow(QMainWindow):
     def _new_tab(self) -> None:
         doc = DocumentEditor(self._tabs)
         self._tabs.addTab(doc, tr("tab.untitled"))
+        self._tabs.setCurrentWidget(doc)
+        self._wire_document(doc)
+        self._update_title(doc)
+
+    def _open_android_memory_tab(self, title: str, data: bytes) -> None:
+        """Frida 读取的内存块：新建标签页（策划 §8.7 L3）。"""
+        doc = DocumentEditor(self._tabs)
+        doc.set_tab_title_override(title[:120])
+        doc.model().load_bytes(data, Path("android_frida_dump.bin"))
+        self._tabs.addTab(doc, title[:120])
         self._tabs.setCurrentWidget(doc)
         self._wire_document(doc)
         self._update_title(doc)
@@ -885,7 +922,10 @@ class MainWindow(QMainWindow):
         if idx < 0:
             return
         name = tr("tab.untitled")
-        if doc.model().file_path:
+        ov = doc.tab_title_override()
+        if ov:
+            name = ov
+        elif doc.model().file_path:
             name = doc.model().file_path.name
         star = "*" if doc.model().modified else ""
         self._tabs.setTabText(idx, f"{star}{name}")

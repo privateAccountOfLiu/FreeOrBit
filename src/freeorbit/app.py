@@ -42,6 +42,11 @@ def main() -> int:
     app.setApplicationName("FreeOrBit")
     app.setOrganizationName("FreeOrBit")
 
+    # 在任意 import frida 之前应用「内置 / 用户 pip」路径偏好（设置项 android/frida_use_pip_env）
+    from freeorbit.platform import frida_loader
+
+    frida_loader.ensure_frida_import_preference()
+
     # 全局界面样式：Windows 优先使用原生 windowsvista（与系统主题一致）
     if sys.platform == "win32":
         for key in ("windowsvista", "windows"):

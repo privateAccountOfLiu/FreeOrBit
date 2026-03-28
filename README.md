@@ -4,7 +4,7 @@
 
 ![FreeOrBit MainWindow](MainWindowShow.png)
 
-**当前版本：1.0.2**
+**当前版本：1.0.3**
 
 基于 **PySide6** 的桌面应用，面向逆向、固件与数据分析。支持大文件（`mmap`）、多标签、暗色主题、**中英文界面**（设置中切换）。
 
@@ -18,6 +18,7 @@
 | **脚本** | 受限 `EditorAPI`（`read` / `write` / `cursor` / `message` 等），见 [`python_script_api.html`](python_script_api.html) |
 | **工具** | **反汇编**（Capstone，多架构）、**填充/字节运算**、文件比较、校验和/哈希、**ORF 滑窗分析**（数值筛选 + 相位分组 + 偏移分布图） |
 | **平台（Windows）** | **打开进程内存**、**原始磁盘/卷**（需管理员）；进程缓冲下 **Hex 左侧列** 显示 **模块名+RVA**（类 Cheat Engine）；**F5 刷新**外部缓冲 |
+| **Android（可选）** | **窗口 → 显示 Android 调试面板**：ADB（设备/包名/ps/shell）+ 可选 **Frida** 附加与 GumJS + 内存 Dump 到新标签；需 `pip install frida` 与设备 **frida-server**（详见 [Scheme.md §8.7](Scheme.md)） |
 | **其它** | 启动画面、工具栏图标（QtAwesome / Font Awesome） |
 
 ## 运行要求
@@ -32,6 +33,8 @@
 
 ```bash
 pip install -e ".[dev]"
+# 可选：Android / Frida 面板
+# pip install -e ".[dev,android]"
 python main.py
 ```
 
@@ -54,6 +57,12 @@ freeorbit
 | [`python_script_api.html`](python_script_api.html) | 脚本面板 API |
 | [`python_template.html`](python_template.html) | 结构模板（Python）编写指南 |
 | [`Scheme.md`](Scheme.md) | 产品策划、与 010 Editor 对照、已实现能力清单 |
+
+## 路线图
+
+| 方向 | 说明 |
+|------|------|
+| **Android / ADB + Frida** | **初版已落地**（停靠面板 + ADB / Frida / 内存 Dump）；持续增强见 [Scheme.md §8.7](Scheme.md)。可选：`pip install -e ".[android]"`。 |
 
 ## 打包（Windows，Nuitka 单文件）
 

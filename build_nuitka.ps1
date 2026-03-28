@@ -1,8 +1,9 @@
-﻿# FreeOrBit Nuitka 单文件打包（Windows）
+# FreeOrBit Nuitka 单文件打包（Windows）
 # 本文件须保存为「带 BOM 的 UTF-8」，否则在 Windows PowerShell 5.1 下会按系统 ANSI 误解析中文，导致 $PSScriptRoot 等失效。
 #
 # 依赖: 建议在项目 .venv 中: pip install -e ".[build]" ; pip install capstone
 #      脚本会优先使用 .venv\Scripts\python.exe，与 pip 安装环境一致。
+#      Frida：.[build] 已含 frida，将随 Nuitka 打入 exe；若用户在设置中勾选「使用用户 pip Frida」则运行时从指定 site-packages 加载。
 # 输出: ./build/FreeOrBit.exe
 #
 # --- capstone（关键）---
@@ -101,7 +102,9 @@ $NuitkaArgs = @(
     "--include-package-data=freeorbit",
     "--include-package=qtawesome",
     "--include-package=capstone",
-    "--include-package-data=qtawesome"
+    "--include-package-data=qtawesome",
+    "--include-package=frida",
+    "--include-package-data=frida"
 )
 
 if ($OneFileNoCompression) {
