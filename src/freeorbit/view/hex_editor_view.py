@@ -73,6 +73,10 @@ class HexEditorView(QScrollArea):
     hover_byte_changed = Signal(int)
     # 画布上请求上下文菜单时的全局坐标（用于 QMenu.exec）
     context_menu_requested = Signal(QPoint)
+    # 进程视图：竖直滚动条已在最底端时用户仍向下滚动（加载下一页）
+    scroll_past_bottom_requested = Signal()
+    # 进程视图：已在最顶端仍向上滚动（加载上一页）
+    scroll_past_top_requested = Signal()
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -100,6 +104,13 @@ class HexEditorView(QScrollArea):
         # 结构模板字段范围 [start, start+length) 高亮（对齐 010 struct outlining 的轻量版）
         self._struct_range: tuple[int, int] | None = None
         self._hover_idx: int = -1
+        # 左侧列仅为相对当前缓冲起始的偏移；进程 VA/模块信息见状态栏。
+        self._address_origin: int = 0
+        self._address_relative_base: int | None = None
+        self._process_image_size: int | None = None
+        # 进程内存：底端/顶端边缘各触发一次翻页询问，离开边缘后重新允许
+        self._scroll_next_process_page_armed = True
+        self._scroll_prev_process_page_armed = True
 
         self.setFont(self._font)
         self._canvas = _HexCanvas(self)
@@ -115,7 +126,7 @@ class HexEditorView(QScrollArea):
 
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self.verticalScrollBar().valueChanged.connect(lambda _: self._canvas.update())
+        self.verticalScrollBar().valueChanged.connect(self._on_vertical_scroll_changed)
         self.horizontalScrollBar().valueChanged.connect(lambda _: self._canvas.update())
 
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -150,7 +161,44 @@ class HexEditorView(QScrollArea):
         self._cursor_pos = 0
         self._anchor = None
         self._struct_range = None
+        self._address_origin = 0
+        self._address_relative_base = None
+        self._process_image_size = None
+        self._scroll_next_process_page_armed = True
+        self._scroll_prev_process_page_armed = True
         self.refresh_display()
+
+    def set_address_origin(self, origin: int) -> None:
+        """缓冲首字节对应的 VA（进程当前页基址）；普通文件为 0。"""
+        self._address_origin = max(0, int(origin))
+        self.refresh_display()
+
+    def set_process_image_range(
+        self, image_base: int | None, image_size: int | None
+    ) -> None:
+        """主模块基址与 SizeOfImage（供状态栏等）；Hex 左侧仅显示缓冲内偏移。"""
+        self._address_relative_base = None if image_base is None else int(image_base)
+        self._process_image_size = (
+            None if image_size is None or image_size <= 0 else int(image_size)
+        )
+        self.refresh_display()
+
+    def set_address_relative_base(self, image_base: int | None) -> None:
+        """兼容旧调用：仅设基址、不启用模块范围判断时等价于始终用页内偏移。"""
+        self.set_process_image_range(image_base, None)
+
+    def rearm_scroll_next_page_prompt(self) -> None:
+        """取消「下一页」对话框后允许再次在底端触发询问。"""
+        self._scroll_next_process_page_armed = True
+
+    def rearm_scroll_prev_page_prompt(self) -> None:
+        """取消「上一页」对话框后允许再次在顶端触发询问。"""
+        self._scroll_prev_process_page_armed = True
+
+    def rearm_scroll_edge_prompts(self) -> None:
+        """成功切换内存页后允许再次在顶/底边缘触发翻页（尤其内容不足一屏时）。"""
+        self._scroll_next_process_page_armed = True
+        self._scroll_prev_process_page_armed = True
 
     def model(self) -> Optional[BinaryDataModel]:
         return self._model
@@ -252,11 +300,23 @@ class HexEditorView(QScrollArea):
         self._resize_canvas()
         self._canvas.update()
 
-    def _addr_digits(self) -> int:
-        if self._model is None:
+    def _digits_for_page_offset(self) -> int:
+        if self._model is None or len(self._model) == 0:
             return 8
-        n = max(0, len(self._model) - 1)
-        return max(8, (n.bit_length() + 3) // 4)
+        hi = len(self._model) - 1
+        return max(8, (hi.bit_length() + 3) // 4)
+
+    def _addr_line_text(self, buf_idx: int) -> str:
+        """左侧列：相对当前缓冲起始的纯偏移（十六进制）。模块信息见状态栏。"""
+        off = buf_idx
+        d = self._digits_for_page_offset()
+        return f"{off:0{d}X}"
+
+    def _addr_column_width_for_bpl(self, bpl: int) -> int:
+        """地址列宽度（与纯十六进制偏移位数一致）。"""
+        del bpl  # 偏移列与 bpl 无关
+        digits = self._digits_for_page_offset()
+        return self._fm.horizontalAdvance("0" * digits) + 2
 
     def _hex_cell_pitch(self) -> int:
         """单字节 Hex 区宽度（含两字符与字间略增间距）。"""
@@ -269,11 +329,9 @@ class HexEditorView(QScrollArea):
         """给定每行字节数，计算整行最小宽度（ASCII 右对齐时的紧凑布局，用于自适应视口）。"""
         bpl = max(1, min(MAX_BYTES_PER_LINE, bpl))
         if self._model is None:
-            digits = 8
+            addr_w = self._fm.horizontalAdvance("0" * 8)
         else:
-            n = max(0, len(self._model) - 1)
-            digits = max(8, (n.bit_length() + 3) // 4)
-        addr_w = self._fm.horizontalAdvance("0" * digits)
+            addr_w = self._addr_column_width_for_bpl(bpl)
         cw = self._fm.horizontalAdvance("0")
         hex_cell = self._hex_cell_pitch()
         hex_w = bpl * hex_cell
@@ -299,8 +357,7 @@ class HexEditorView(QScrollArea):
             self._min_content_width = 400
             self._paint_width = max(400, max(1, self.viewport().width()))
             return
-        digits = self._addr_digits()
-        addr_w = self._fm.horizontalAdvance("0" * digits)
+        addr_w = self._addr_column_width_for_bpl(self._bytes_per_line)
         cw = self._fm.horizontalAdvance("0")
         hex_cell = self._hex_cell_pitch()
         hex_w = self._bytes_per_line * hex_cell
@@ -379,7 +436,6 @@ class HexEditorView(QScrollArea):
         struct_bg = QColor(0, 130, 180, 58)
 
         total = len(self._model)
-        digits = self._addr_digits()
         clip = event.rect()
         first_row = max(0, clip.top() // self._row_height)
         last_row = clip.bottom() // self._row_height + 1
@@ -400,7 +456,7 @@ class HexEditorView(QScrollArea):
             else:
                 p.fillRect(0, y_base, self._paint_width, self._row_height, bg)
 
-            addr = f"{base:0{digits}X}"
+            addr = self._addr_line_text(base)
             row_fg = self._row_text_color(palette, row)
             p.setPen(row_fg)
             p.drawText(self._margin_x, y_base + self._fm.ascent() + 2, addr)
@@ -606,7 +662,64 @@ class HexEditorView(QScrollArea):
                 self._anchor = None
                 self._emit_selection()
 
+    def _on_vertical_scroll_changed(self, value: int) -> None:
+        self._canvas.update()
+        sb = self.verticalScrollBar()
+        mx = sb.maximum()
+        if mx > 0:
+            if value < mx:
+                self._scroll_next_process_page_armed = True
+            if value > 0:
+                self._scroll_prev_process_page_armed = True
+
     def wheelEvent(self, event: QWheelEvent) -> None:
+        m = self._model
+        if (
+            m is not None
+            and len(m) > 0
+            and getattr(m, "external_kind", None) == "process"
+        ):
+            sb = self.verticalScrollBar()
+            dy = event.angleDelta().y()
+            if dy == 0:
+                dy = event.pixelDelta().y()
+            mx = sb.maximum()
+            v = sb.value()
+            want_down = dy < 0
+            want_up = dy > 0
+            # 内容不足一屏：无法滚动，用滚轮方向区分上一页 / 下一页
+            if mx <= 0:
+                if want_up and self._scroll_prev_process_page_armed:
+                    self._scroll_prev_process_page_armed = False
+                    self.scroll_past_top_requested.emit()
+                    event.accept()
+                    return
+                if want_down and self._scroll_next_process_page_armed:
+                    self._scroll_next_process_page_armed = False
+                    self.scroll_past_bottom_requested.emit()
+                    event.accept()
+                    return
+            else:
+                at_top = v <= 0
+                at_bottom = v >= mx
+                if (
+                    at_top
+                    and want_up
+                    and self._scroll_prev_process_page_armed
+                ):
+                    self._scroll_prev_process_page_armed = False
+                    self.scroll_past_top_requested.emit()
+                    event.accept()
+                    return
+                if (
+                    at_bottom
+                    and want_down
+                    and self._scroll_next_process_page_armed
+                ):
+                    self._scroll_next_process_page_armed = False
+                    self.scroll_past_bottom_requested.emit()
+                    event.accept()
+                    return
         super().wheelEvent(event)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:

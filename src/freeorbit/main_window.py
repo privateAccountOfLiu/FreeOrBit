@@ -15,16 +15,18 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QStatusBar,
     QTabWidget,
+    QToolBar,
     QWidget,
 )
 
 from freeorbit.dialogs.open_disk_dialog import OpenDiskDialog
-from freeorbit.dialogs.open_process_dialog import OpenProcessDialog
+from freeorbit.dialogs.open_process_dialog import ProcessListDialog
 from freeorbit.dialogs.settings_dialog import SettingsDialog
 from freeorbit.i18n import tr
 from freeorbit.services.bookmarks import BookmarkPanel
 from freeorbit.platform import disk_raw
 from freeorbit.platform import win_memory
+from freeorbit.platform import win_process_list
 from freeorbit.services.byte_tools_dock import ByteToolsDock
 from freeorbit.services.checksum_dialog import ChecksumDialog
 from freeorbit.services.disasm_dock import DisasmDock
@@ -91,11 +93,23 @@ class MainWindow(QMainWindow):
         self._compare_window: Optional[CompareWindow] = None
 
         self._create_menus()
+        self._create_toolbar()
         self.retranslate_ui()
         self._new_tab()
         # 首帧后恢复结构模板路径（需 QApplication 与 QSettings 已就绪）
         QTimer.singleShot(0, self._struct_dock.restore_saved_template)
         self._struct_dock.struct_tree_changed.connect(self._on_struct_tree_changed)
+
+    def _create_toolbar(self) -> None:
+        tb = QToolBar(self)
+        tb.setObjectName("mainToolBar")
+        tb.setMovable(True)
+        self.addToolBar(tb)
+        tb.addAction(self._act_new)
+        tb.addAction(self._act_open)
+        tb.addAction(self._act_save)
+        tb.addSeparator()
+        tb.addAction(self._act_refresh)
 
     def _create_menus(self) -> None:
         mb = self.menuBar()
@@ -149,6 +163,11 @@ class MainWindow(QMainWindow):
         self._act_locate_struct.triggered.connect(self._locate_struct_from_cursor)
         self._menu_edit.addAction(self._act_locate_struct)
 
+        self._act_refresh = QAction(self)
+        self._act_refresh.setShortcut(QKeySequence("F5"))
+        self._act_refresh.triggered.connect(self._refresh_current_tab)
+        self._menu_edit.addAction(self._act_refresh)
+
         self._menu_tools = mb.addMenu("")
         self._act_search = QAction(self)
         self._act_search.setShortcut(QKeySequence.Find)
@@ -182,6 +201,10 @@ class MainWindow(QMainWindow):
         self._act_disasm = QAction(self)
         self._act_disasm.triggered.connect(self._show_disasm_dock)
         self._menu_tools.addAction(self._act_disasm)
+
+        self._act_orf = QAction(self)
+        self._act_orf.triggered.connect(self._open_orf_window)
+        self._menu_tools.addAction(self._act_orf)
 
         self._menu_win = mb.addMenu("")
         self._act_show_search = QAction(self)
@@ -242,6 +265,7 @@ class MainWindow(QMainWindow):
                 (self._act_undo, "fa5s.undo"),
                 (self._act_redo, "fa5s.redo"),
                 (self._act_locate_struct, "fa5s.crosshairs"),
+                (self._act_refresh, "fa5s.sync-alt"),
                 (self._act_search, "fa5s.search"),
                 (self._act_checksum, "fa5s.file-signature"),
                 (self._act_compare, "fa5s.columns"),
@@ -250,6 +274,7 @@ class MainWindow(QMainWindow):
                 (self._act_convert, "fa5s.exchange-alt"),
                 (self._act_goto, "fa5s.location-arrow"),
                 (self._act_disasm, "fa5s.code-branch"),
+                (self._act_orf, "fa5s.dna"),
                 (self._act_show_search, "fa5s.search"),
                 (self._act_show_struct, "fa5s.sitemap"),
                 (self._act_show_bm, "fa5s.bookmark"),
@@ -276,6 +301,7 @@ class MainWindow(QMainWindow):
         self._act_undo.setText(tr("action.undo"))
         self._act_redo.setText(tr("action.redo"))
         self._act_locate_struct.setText(tr("action.locate_struct"))
+        self._act_refresh.setText(tr("action.refresh"))
         self._menu_tools.setTitle(tr("menu.tools"))
         self._act_search.setText(tr("action.search"))
         self._act_checksum.setText(tr("action.checksum"))
@@ -285,6 +311,7 @@ class MainWindow(QMainWindow):
         self._act_convert.setText(tr("action.convert"))
         self._act_goto.setText(tr("action.goto"))
         self._act_disasm.setText(tr("action.disasm_panel"))
+        self._act_orf.setText(tr("action.orf"))
         self._menu_win.setTitle(tr("menu.window"))
         self._act_show_search.setText(tr("action.show_search"))
         self._act_show_struct.setText(tr("action.show_struct"))
@@ -365,7 +392,77 @@ class MainWindow(QMainWindow):
         doc.hex_view().hover_byte_changed.connect(
             lambda idx, d=doc: self._on_hex_hover_byte(d, idx)
         )
+        doc.hex_view().scroll_past_bottom_requested.connect(
+            lambda d=doc: self._on_process_scroll_next_page(d)
+        )
+        doc.hex_view().scroll_past_top_requested.connect(
+            lambda d=doc: self._on_process_scroll_prev_page(d)
+        )
         self._bind_docks()
+
+    def _on_process_scroll_next_page(self, doc: DocumentEditor) -> None:
+        """进程视图：在缓冲最底端继续向下滚时询问是否载入下一 VA 页。"""
+        if self.current_editor() is not doc:
+            return
+        m = doc.model()
+        if m.external_kind != "process":
+            return
+        rb = doc.process_refresh_base()
+        rs = doc.process_refresh_size()
+        if rb is None or rs is None or rs <= 0:
+            return
+        next_va = rb + rs
+        r = QMessageBox.question(
+            self,
+            tr("process_scroll.next_title"),
+            tr("process_scroll.next_body").format(va=next_va),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if r != QMessageBox.StandardButton.Yes:
+            doc.hex_view().rearm_scroll_next_page_prompt()
+            return
+        if not doc.switch_process_memory_page(next_va, self, skip_discard_confirm=False):
+            doc.hex_view().rearm_scroll_next_page_prompt()
+            return
+        doc.hex_view().rearm_scroll_edge_prompts()
+        self._refresh_status(doc)
+
+    def _on_process_scroll_prev_page(self, doc: DocumentEditor) -> None:
+        """进程视图：在缓冲最顶端继续向上滚时询问是否载入上一 VA 页。"""
+        if self.current_editor() is not doc:
+            return
+        m = doc.model()
+        if m.external_kind != "process":
+            return
+        rb = doc.process_refresh_base()
+        if rb is None:
+            return
+        ps = win_memory.get_system_page_size()
+        prev_va = rb - ps
+        if prev_va < 0:
+            QMessageBox.information(
+                self,
+                tr("process_scroll.prev_title"),
+                tr("process_scroll.no_prev"),
+            )
+            doc.hex_view().rearm_scroll_prev_page_prompt()
+            return
+        r = QMessageBox.question(
+            self,
+            tr("process_scroll.prev_title"),
+            tr("process_scroll.prev_body").format(va=prev_va),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if r != QMessageBox.StandardButton.Yes:
+            doc.hex_view().rearm_scroll_prev_page_prompt()
+            return
+        if not doc.switch_process_memory_page(prev_va, self, skip_discard_confirm=False):
+            doc.hex_view().rearm_scroll_prev_page_prompt()
+            return
+        doc.hex_view().rearm_scroll_edge_prompts()
+        self._refresh_status(doc)
 
     def _on_hex_hover_byte(self, doc: DocumentEditor, idx: int) -> None:
         if self.current_editor() is not doc:
@@ -444,6 +541,10 @@ class MainWindow(QMainWindow):
         self._disasm_dock.bind_document(doc)
         self._refresh_status(doc)
         self._sync_struct_visuals(doc)
+        if doc is not None:
+            self._act_refresh.setEnabled(doc.can_refresh())
+        else:
+            self._act_refresh.setEnabled(False)
 
     def _close_tab(self, index: int, *, repopulate_if_empty: bool = True) -> None:
         """关闭标签。退出程序时 repopulate_if_empty=False，避免删完又自动新建导致无法退出。"""
@@ -503,39 +604,82 @@ class MainWindow(QMainWindow):
                 self, tr("open_process.title"), tr("open_process.win_only")
             )
             return
-        dlg = OpenProcessDialog(self)
+        dlg = ProcessListDialog(self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         try:
-            pid, base, size = dlg.values()
+            pid, user_va = dlg.values()
         except ValueError:
             QMessageBox.warning(
                 self, tr("open_process.title"), tr("open_process.bad_base")
             )
             return
+        if pid <= 0:
+            QMessageBox.warning(self, tr("open_process.title"), tr("open_process.bad_base"))
+            return
+        if pid == 4:
+            r = QMessageBox.question(
+                self,
+                tr("security.dangerous_pid_title"),
+                tr("security.dangerous_pid_body").format(pid=pid),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if r != QMessageBox.StandardButton.Yes:
+                return
+        page_size = win_memory.get_system_page_size()
+        page_base = win_memory.align_address_to_page(user_va, page_size)
+        read_size = win_memory.clamp_read_in_region(pid, page_base, page_size)
+        if read_size <= 0:
+            ib = win_process_list.get_main_module_base(pid)
+            if ib is not None:
+                user_va = ib
+                page_base = win_memory.align_address_to_page(user_va, page_size)
+                read_size = win_memory.clamp_read_in_region(pid, page_base, page_size)
+        if read_size <= 0:
+            fr = win_memory.first_readable_page_base(pid)
+            if fr is not None:
+                user_va = fr
+                page_base = win_memory.align_address_to_page(user_va, page_size)
+                read_size = win_memory.clamp_read_in_region(pid, page_base, page_size)
+        if read_size <= 0:
+            QMessageBox.warning(
+                self, tr("open_process.title"), tr("open_process.bad_region")
+            )
+            return
+        # 页内偏移：用户指定 VA 相对本页基址；缓冲下标与此相同
+        rel = user_va - page_base
+        if rel < 0:
+            rel = 0
+        elif read_size > 0 and rel >= read_size:
+            rel = read_size - 1
         try:
             h = win_memory.open_process(pid)
-            data = win_memory.read_process_memory(h, base, size)
+            data = win_memory.read_process_memory(h, page_base, read_size)
         except (OSError, ValueError) as e:
             QMessageBox.warning(self, tr("dlg.open_fail"), str(e))
             return
-        tab_path = Path(f"proc_{pid}_{base:#x}")
+        tab_path = Path(f"proc_{pid}_{page_base:#x}")
         doc = DocumentEditor(self._tabs)
         doc.model().load_bytes(data, tab_path, external_kind="process")
 
         def flush() -> None:
             win_memory.write_process_memory(
-                h, base, bytes(doc.model().read(0, len(doc.model())))
+                h, page_base, bytes(doc.model().read(0, len(doc.model())))
             )
 
         def close_h() -> None:
             win_memory.close_handle(h)
 
         doc.set_external_hooks(flush=flush, close=close_h)
+        doc.set_process_refresh_meta(pid, page_base, read_size)
+        ib, isz = win_process_list.get_main_module_base_and_size(pid)
+        doc.set_process_image_base(ib, isz)
+        doc.set_process_modules(win_process_list.list_loaded_modules(pid))
         self._tabs.addTab(doc, tab_path.name)
         self._tabs.setCurrentWidget(doc)
         self._wire_document(doc)
-        doc.hex_view().refresh_display()
+        doc.hex_view().select_single_byte(rel)
 
     def _open_disk_slice(self) -> None:
         dlg = OpenDiskDialog(self)
@@ -565,10 +709,32 @@ class MainWindow(QMainWindow):
             )
 
         doc.set_external_hooks(flush=flush, close=lambda: None)
+        doc.set_disk_refresh_meta(norm, offset, size)
         self._tabs.addTab(doc, tab_path.name)
         self._tabs.setCurrentWidget(doc)
         self._wire_document(doc)
         doc.hex_view().refresh_display()
+
+    def _refresh_current_tab(self) -> None:
+        doc = self.current_editor()
+        if doc is None or not doc.can_refresh():
+            return
+        ok, msg = doc.refresh_content(self)
+        if not ok and msg:
+            QMessageBox.warning(self, tr("refresh.title"), msg)
+        elif ok:
+            self._update_title(doc)
+
+    def _open_orf_window(self) -> None:
+        from freeorbit.services.orf_window import OrfWindow
+
+        doc = self.current_editor()
+        if doc is None:
+            return
+        win = OrfWindow(doc, self)
+        win.show()
+        win.raise_()
+        win.activateWindow()
 
     def _save_file(self) -> bool:
         doc = self.current_editor()
@@ -649,12 +815,70 @@ class MainWindow(QMainWindow):
             if doc.hex_view().overwrite_mode()
             else tr("status.insert")
         )
-        self._status.showMessage(
-            f"{tr('status.addr')}: 0x{pos:X} ({pos})  |  "
+        addr_label = tr("status.addr")
+        addr_show = pos
+        if m.external_kind == "process":
+            rb0 = doc.process_refresh_base()
+            if rb0 is not None:
+                va_cur = rb0 + pos
+                mod = win_process_list.resolve_va_to_module(
+                    va_cur, doc.process_modules()
+                )
+                if mod is not None:
+                    rva = va_cur - mod.base
+                    ib = doc.process_image_base()
+                    # 主模块：与 Hex 一致，仅映像偏移（0x…），不拼进程名
+                    if ib is not None and mod.base == ib:
+                        addr_label = tr("status.proc_image_rel")
+                        addr_show = rva
+                        addr_hex = f"0x{rva:X}"
+                    else:
+                        nm = mod.name
+                        if len(nm) > 28:
+                            nm = nm[:27] + "…"
+                        addr_label = tr("status.proc_module_off")
+                        addr_show = rva
+                        addr_hex = f"{nm}+0x{rva:X}"
+                else:
+                    addr_show = pos
+                    addr_label = tr("status.proc_page_off")
+                    addr_hex = f"0x{addr_show:X}"
+            else:
+                addr_hex = f"0x{addr_show:X}" if addr_show >= 0 else f"-0x{(-addr_show):X}"
+        else:
+            addr_hex = f"0x{addr_show:X}" if addr_show >= 0 else f"-0x{(-addr_show):X}"
+        base_msg = (
+            f"{addr_label}: {addr_hex} ({addr_show})  |  "
             f"{tr('status.sel')}: {sel} {tr('status.bytes')}  |  "
             f"{tr('status.len')}: {len(m)}  |  "
             f"{tr('status.mode')}: {mode}"
         )
+        if m.external_kind == "process":
+            extra: list[str] = []
+            p_pid = doc.process_pid()
+            if p_pid is not None:
+                extra.append(f"{tr('status.proc_pid')}={p_pid}")
+            ib = doc.process_image_base()
+            extra.append(
+                f"{tr('status.proc_image_base')}=0x{ib:X}"
+                if ib is not None
+                else f"{tr('status.proc_image_base')}=—"
+            )
+            rb = doc.process_refresh_base()
+            if rb is not None:
+                # 定义：页基址 + 页内偏移 = VA（与 Windows 线性 VA 一致）
+                extra.append(f"{tr('status.proc_page_base')}=0x{rb:X}")
+                va_cur = rb + pos
+                extra.append(f"{tr('status.proc_va')}=0x{va_cur:X}")
+                if a != b:
+                    va_lo = rb + min(a, b)
+                    va_hi = rb + max(a, b)
+                    extra.append(
+                        f"{tr('status.proc_va')}[{tr('status.sel')}]=0x{va_lo:X}…0x{va_hi:X}"
+                    )
+            self._status.showMessage(" | ".join(extra) + "  ·  " + base_msg)
+        else:
+            self._status.showMessage(base_msg)
 
     def _update_title(self, doc: DocumentEditor) -> None:
         idx = self._tabs.indexOf(doc)

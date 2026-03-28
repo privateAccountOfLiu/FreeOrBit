@@ -8,7 +8,7 @@ def _byte_to_ascii(b: int) -> str:
 
 
 def address_digit_count(total_file_bytes: int) -> int:
-    """与 HexEditorView._addr_digits 一致：由文件总长度决定地址列宽。"""
+    """与 HexEditorView 页内偏移位数一致：由文件总长度决定地址列宽（非进程模块模式）。"""
     if total_file_bytes <= 0:
         return 8
     n = max(0, total_file_bytes - 1)

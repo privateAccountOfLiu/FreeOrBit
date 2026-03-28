@@ -24,6 +24,7 @@ from freeorbit.commands.edit_commands import (
     ModifyBytesCommand,
 )
 from freeorbit.model.binary_data_model import BinaryDataModel
+from freeorbit.platform.win_process_list import ModuleInfo
 from freeorbit.view.hex_editor_view import HexEditorView
 
 
@@ -52,6 +53,17 @@ class DocumentEditor(QWidget):
         self._hex.context_menu_requested.connect(self._on_hex_context_menu)
         self._external_flush: Optional[Callable[[], None]] = None
         self._external_close: Optional[Callable[[], None]] = None
+        # 刷新快照用（进程 / 磁盘切片）；普通文件用 model.file_path
+        self._refresh_pid: Optional[int] = None
+        self._refresh_base: Optional[int] = None
+        self._refresh_size: Optional[int] = None
+        self._refresh_disk_norm: Optional[str] = None
+        self._refresh_disk_offset: Optional[int] = None
+        self._refresh_disk_size: Optional[int] = None
+        # 主模块映像基址与 SizeOfImage（PSAPI），仅进程缓冲；用于 CE 式「仅在模块内显示 RVA」
+        self._process_image_base: Optional[int] = None
+        self._process_image_size: Optional[int] = None
+        self._process_modules: list[ModuleInfo] = []
 
     def set_external_hooks(
         self,
@@ -72,6 +84,267 @@ class DocumentEditor(QWidget):
             self._external_close()
         self._external_close = None
         self._external_flush = None
+        self._clear_refresh_sources()
+
+    def set_process_refresh_meta(self, pid: int, base: int, size: int) -> None:
+        """打开进程内存后调用，供「刷新」重新 ReadProcessMemory。"""
+        self._refresh_pid = pid
+        self._refresh_base = base
+        self._refresh_size = size
+        self._refresh_disk_norm = None
+        self._refresh_disk_offset = None
+        self._refresh_disk_size = None
+        self._hex.set_address_origin(base)
+
+    def set_process_image_base(
+        self,
+        image_base: Optional[int],
+        image_size: Optional[int] = None,
+    ) -> None:
+        """主模块 PE 映像基址与大小；大小用于判断 VA 是否在模块内（与 CE 一致，区外显示页内偏移）。"""
+        self._process_image_base = image_base
+        self._process_image_size = image_size
+        self._hex.set_process_image_range(image_base, image_size)
+
+    def process_image_base(self) -> Optional[int]:
+        return self._process_image_base
+
+    def process_image_size(self) -> Optional[int]:
+        return self._process_image_size
+
+    def process_refresh_base(self) -> Optional[int]:
+        return self._refresh_base
+
+    def process_refresh_size(self) -> Optional[int]:
+        return self._refresh_size
+
+    def process_pid(self) -> Optional[int]:
+        return self._refresh_pid
+
+    def set_process_modules(self, modules: list[ModuleInfo]) -> None:
+        """已加载模块列表（CE 式命中，供状态栏）；打开/刷新/切页时更新。"""
+        self._process_modules = list(modules)
+
+    def process_modules(self) -> list[ModuleInfo]:
+        return list(self._process_modules)
+
+    def set_disk_refresh_meta(self, norm_path: str, offset: int, size: int) -> None:
+        """打开磁盘切片后调用。"""
+        self._refresh_disk_norm = norm_path
+        self._refresh_disk_offset = offset
+        self._refresh_disk_size = size
+        self._refresh_pid = None
+        self._refresh_base = None
+        self._refresh_size = None
+        self._process_image_base = None
+        self._process_image_size = None
+        self._process_modules = []
+        self._hex.set_address_origin(0)
+        self._hex.set_process_image_range(None, None)
+
+    def _clear_refresh_sources(self) -> None:
+        self._refresh_pid = None
+        self._refresh_base = None
+        self._refresh_size = None
+        self._refresh_disk_norm = None
+        self._refresh_disk_offset = None
+        self._refresh_disk_size = None
+        self._process_image_base = None
+        self._process_image_size = None
+        self._process_modules = []
+        self._hex.set_address_origin(0)
+        self._hex.set_process_image_range(None, None)
+
+    def can_refresh(self) -> bool:
+        """是否可从外部源重新载入缓冲（进程 / 磁盘 / 已保存路径的文件）。"""
+        m = self._model
+        if m.external_kind == "process":
+            return (
+                self._refresh_pid is not None
+                and self._refresh_base is not None
+                and self._refresh_size is not None
+            )
+        if m.external_kind == "disk_slice":
+            return (
+                self._refresh_disk_norm is not None
+                and self._refresh_disk_offset is not None
+                and self._refresh_disk_size is not None
+            )
+        return m.file_path is not None and m.file_path.exists()
+
+    def switch_process_memory_page(
+        self,
+        target_va: int,
+        parent: QWidget,
+        *,
+        skip_discard_confirm: bool = False,
+    ) -> bool:
+        """切换到包含 target_va 的内存页并重新读取；成功返回 True。"""
+        from freeorbit.platform import win_memory
+
+        m = self._model
+        if m.external_kind != "process" or self._refresh_pid is None:
+            return False
+        if m.modified and not skip_discard_confirm:
+            r = QMessageBox.question(
+                parent,
+                tr("goto.page_switch_title"),
+                tr("goto.switch_discard"),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if r != QMessageBox.StandardButton.Yes:
+                return False
+        pid = self._refresh_pid
+        img = self._process_image_base
+        ps = win_memory.get_system_page_size()
+        page_base = win_memory.align_address_to_page(target_va, ps)
+        sz = win_memory.clamp_read_in_region(pid, page_base, ps)
+        if sz <= 0:
+            QMessageBox.warning(parent, tr("open_process.title"), tr("open_process.bad_region"))
+            return False
+        self.external_close()
+        try:
+            h = win_memory.open_process(pid)
+            data = win_memory.read_process_memory(h, page_base, sz)
+        except (OSError, ValueError) as e:
+            QMessageBox.warning(parent, tr("open_process.title"), str(e))
+            return False
+        tab_path = m.file_path or Path(f"proc_{pid}_{page_base:#x}")
+        m.load_bytes(data, tab_path, external_kind="process")
+
+        def flush() -> None:
+            win_memory.write_process_memory(
+                h, page_base, bytes(m.read(0, len(m)))
+            )
+
+        def close_h() -> None:
+            win_memory.close_handle(h)
+
+        self.set_external_hooks(flush=flush, close=close_h)
+        self.set_process_refresh_meta(pid, page_base, sz)
+        self.set_process_image_base(img, self._process_image_size)
+        from freeorbit.platform import win_process_list
+
+        self.set_process_modules(win_process_list.list_loaded_modules(pid))
+        self._undo.clear()
+        self._hex.refresh_display()
+        rel = target_va - page_base
+        if 0 <= rel < len(m):
+            self._hex.select_single_byte(rel)
+        return True
+
+    def refresh_content(self, parent: QWidget) -> tuple[bool, str]:
+        """从外部源重新读取并替换当前缓冲；成功返回 (True, "")。"""
+        from freeorbit.platform import disk_raw
+        from freeorbit.platform import win_memory
+
+        m = self._model
+        if m.external_kind == "process":
+            if not win_memory.is_windows():
+                return False, tr("open_process.win_only")
+            if (
+                self._refresh_pid is None
+                or self._refresh_base is None
+                or self._refresh_size is None
+            ):
+                return False, tr("refresh.no_source")
+            if self._external_close is not None:
+                self._external_close()
+            self._external_close = None
+            self._external_flush = None
+            try:
+                h = win_memory.open_process(self._refresh_pid)
+                data = win_memory.read_process_memory(
+                    h, self._refresh_base, self._refresh_size
+                )
+            except (OSError, ValueError) as e:
+                return False, str(e)
+
+            tab_path = m.file_path or Path(
+                f"proc_{self._refresh_pid}_{self._refresh_base:#x}"
+            )
+            m.load_bytes(data, tab_path, external_kind="process")
+
+            def flush() -> None:
+                win_memory.write_process_memory(
+                    h,
+                    self._refresh_base,
+                    bytes(m.read(0, len(m))),
+                )
+
+            def close_h() -> None:
+                win_memory.close_handle(h)
+
+            self.set_external_hooks(flush=flush, close=close_h)
+            self.set_process_refresh_meta(
+                self._refresh_pid, self._refresh_base, self._refresh_size
+            )
+            from freeorbit.platform import win_process_list
+
+            self.set_process_modules(
+                win_process_list.list_loaded_modules(self._refresh_pid)
+            )
+            self._undo.clear()
+            self._hex.refresh_display()
+            return True, ""
+
+        if m.external_kind == "disk_slice":
+            if (
+                self._refresh_disk_norm is None
+                or self._refresh_disk_offset is None
+                or self._refresh_disk_size is None
+            ):
+                return False, tr("refresh.no_source")
+            try:
+                data = disk_raw.read_device_range(
+                    self._refresh_disk_norm,
+                    self._refresh_disk_offset,
+                    self._refresh_disk_size,
+                )
+            except (OSError, ValueError) as e:
+                return False, str(e)
+            tab_path = m.file_path or disk_raw.display_path_for_tab(
+                self._refresh_disk_norm, self._refresh_disk_offset
+            )
+            m.load_bytes(data, tab_path, external_kind="disk_slice")
+
+            def flush() -> None:
+                disk_raw.write_device_range(
+                    self._refresh_disk_norm,
+                    self._refresh_disk_offset,
+                    bytes(m.read(0, len(m))),
+                )
+
+            self.set_external_hooks(flush=flush, close=lambda: None)
+            self.set_disk_refresh_meta(
+                self._refresh_disk_norm,
+                self._refresh_disk_offset,
+                self._refresh_disk_size,
+            )
+            self._undo.clear()
+            self._hex.refresh_display()
+            return True, ""
+
+        fp = m.file_path
+        if fp is None or not fp.exists():
+            return False, tr("refresh.no_source")
+        if m.modified:
+            r = QMessageBox.question(
+                parent,
+                tr("refresh.title"),
+                tr("refresh.discard_changes"),
+                QMessageBox.Yes | QMessageBox.No,
+            )
+            if r != QMessageBox.Yes:
+                return False, ""
+        try:
+            m.load_file(fp)
+        except OSError as e:
+            return False, str(e)
+        self._undo.clear()
+        self._hex.refresh_display()
+        return True, ""
 
     def uses_external_save(self) -> bool:
         """是否为进程内存 / 磁盘切片等外部缓冲（保存时写回而非另存为）。"""
@@ -158,7 +431,7 @@ class DocumentEditor(QWidget):
 
         parent = self.window()
         try:
-            GotoOffsetDialog(self._hex, parent).exec()
+            GotoOffsetDialog(self._hex, parent, document=self).exec()
         except Exception as e:  # noqa: BLE001
             QMessageBox.warning(parent, tr("dlg.goto"), str(e))
 
