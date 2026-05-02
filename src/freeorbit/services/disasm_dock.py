@@ -157,7 +157,7 @@ class DisasmDock(QDockWidget):
         w = QWidget()
         self.setWidget(w)
         lay = QVBoxLayout(w)
-        lay.setContentsMargins(4, 4, 4, 4)
+        lay.setContentsMargins(6, 6, 6, 6)
 
         top = QHBoxLayout()
         self._lbl_arch = QLabel()

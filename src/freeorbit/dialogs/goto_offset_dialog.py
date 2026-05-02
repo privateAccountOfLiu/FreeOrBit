@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from freeorbit.i18n import tr
+from freeorbit.theme import TEXT_SECONDARY
 
 if TYPE_CHECKING:
     from freeorbit.view.hex_editor_view import HexEditorView
@@ -87,6 +88,7 @@ class GotoOffsetDialog(QDialog):
         document: Optional[DocumentEditor] = None,
     ) -> None:
         super().__init__(parent)
+        self.setMinimumWidth(360)
         self._hex = hex_view
         self._doc = document
         self._settings = QSettings()
@@ -102,7 +104,7 @@ class GotoOffsetDialog(QDialog):
             le.selectAll()
 
         self._tip = QLabel(self)
-        self._tip.setStyleSheet("color: palette(mid);")
+        self._tip.setStyleSheet(f"color: {TEXT_SECONDARY};")
 
         self._form = QFormLayout()
         self._lbl_off = QLabel()

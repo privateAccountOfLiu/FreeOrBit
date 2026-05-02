@@ -42,6 +42,7 @@ class ChecksumDialog(QDialog):
     def __init__(self, model: BinaryDataModel, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("校验和 / 哈希")
+        self.setMinimumWidth(420)
         self._model = model
         data = model.read(0, len(model))
 

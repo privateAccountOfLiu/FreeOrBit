@@ -74,6 +74,8 @@ class BookmarkPanel(QDockWidget):
         w = QWidget()
         self.setWidget(w)
         lay = QVBoxLayout(w)
+        lay.setContentsMargins(6, 6, 6, 6)
+        lay.setSpacing(8)
         row = QHBoxLayout()
         self._name = QLineEdit()
         row.addWidget(self._name)

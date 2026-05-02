@@ -16,6 +16,7 @@ ensure_capstone_dll_path()
 from freeorbit.icon_assets import app_icon
 from freeorbit.i18n import tr
 from freeorbit.main_window import MainWindow
+from freeorbit.theme import apply_theme
 from freeorbit.ui.splash_screen import SplashScreen
 
 
@@ -47,13 +48,9 @@ def main() -> int:
 
     frida_loader.ensure_frida_import_preference()
 
-    # 全局界面样式：Windows 优先使用原生 windowsvista（与系统主题一致）
-    if sys.platform == "win32":
-        for key in ("windowsvista", "windows"):
-            st = QStyleFactory.create(key)
-            if st is not None:
-                app.setStyle(st)
-                break
+    # Fusion theme with persisted dark/light — must be set before splash screen
+    app.setStyle(QStyleFactory.create("Fusion"))
+    apply_theme(app)
 
     # Windows：若用户选择默认以管理员启动，则尽早提权重启（在闪屏与主窗口之前）
     if sys.platform == "win32":

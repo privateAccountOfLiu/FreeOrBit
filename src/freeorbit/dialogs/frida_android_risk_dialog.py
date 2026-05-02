@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 )
 
 from freeorbit.i18n import tr
+from freeorbit.theme import TEXT_SECONDARY
 
 
 class FridaAndroidInstallRiskDialog(QDialog):
@@ -33,7 +34,7 @@ class FridaAndroidInstallRiskDialog(QDialog):
         root = QVBoxLayout(self)
         hint = QLabel(tr("android.frida_risk_intro"))
         hint.setWordWrap(True)
-        hint.setStyleSheet("color: palette(mid);")
+        hint.setStyleSheet(f"color: {TEXT_SECONDARY};")
         root.addWidget(hint)
 
         body = QTextEdit()

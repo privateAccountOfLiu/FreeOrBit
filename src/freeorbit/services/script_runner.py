@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from freeorbit.i18n import tr
+from freeorbit.theme import font_mono
 from freeorbit.script.editor_api import EditorAPI, make_script_globals
 
 if TYPE_CHECKING:
@@ -48,13 +49,14 @@ class ScriptDock(QDockWidget):
         w = QWidget()
         self.setWidget(w)
         lay = QVBoxLayout(w)
-        lay.setContentsMargins(4, 4, 4, 4)
+        lay.setContentsMargins(6, 6, 6, 6)
 
         self._lbl_code = QLabel()
         self._code = _WheelPlainTextEdit()
         self._code.setPlaceholderText(tr("script.placeholder"))
         self._code.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self._code.setMinimumHeight(48)
+        self._code.setFont(font_mono(10))
         self._code.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )

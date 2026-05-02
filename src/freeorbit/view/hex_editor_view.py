@@ -20,6 +20,8 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QFrame, QScrollArea, QSizePolicy, QWidget
 
+from freeorbit.theme import theme_color, TEXT_PRIMARY
+
 if TYPE_CHECKING:
     from freeorbit.model.binary_data_model import BinaryDataModel
 
@@ -411,11 +413,13 @@ class HexEditorView(QScrollArea):
         self.ensureVisible(0, y, 1, self._row_height)
 
     def _row_text_color(self, palette: QPalette, row: int) -> QColor:
-        """斑马纹行（AlternateBase）上避免浅色字与浅色底糊在一起。"""
+        """Ensure text contrasts with row background on both light and dark themes."""
         if row % 2 == 0:
             return palette.color(QPalette.ColorRole.WindowText)
         fg = palette.color(QPalette.ColorRole.Text)
         alt = palette.color(QPalette.ColorRole.AlternateBase)
+        if alt.lightness() < 50 and fg.lightness() < 50:
+            return QColor(TEXT_PRIMARY)
         if alt.lightness() > 160 and fg.lightness() > 170:
             return QColor(28, 28, 32)
         return fg
@@ -430,10 +434,14 @@ class HexEditorView(QScrollArea):
         alt = QColor(palette.color(QPalette.ColorRole.AlternateBase))
         sel = QColor(palette.color(QPalette.ColorRole.Highlight))
         sel.setAlpha(120)
-        hit_c = QColor(255, 200, 0, 80)
-        cmp_same = QColor(0, 170, 0, 85)
-        cmp_diff = QColor(230, 50, 50, 100)
-        struct_bg = QColor(0, 130, 180, 58)
+        hit_c = QColor(theme_color("search_hit"))
+        hit_c.setAlpha(80)
+        cmp_same = QColor(theme_color("compare_match"))
+        cmp_same.setAlpha(85)
+        cmp_diff = QColor(theme_color("compare_diff"))
+        cmp_diff.setAlpha(100)
+        struct_bg = QColor(theme_color("structure"))
+        struct_bg.setAlpha(58)
 
         total = len(self._model)
         clip = event.rect()
@@ -538,7 +546,7 @@ class HexEditorView(QScrollArea):
         if total == 0:
             x_hex = self._hex_draw_left
             vx = x_hex + (self._nibble * cw)
-            p.setPen(QColor(255, 100, 100))
+            p.setPen(theme_color("cursor"))
             p.drawLine(int(vx), 2, int(vx), self._row_height - 2)
         elif self._cursor_pos < total:
             cr = self._cursor_pos // self._bytes_per_line
@@ -546,7 +554,7 @@ class HexEditorView(QScrollArea):
             cy = cr * self._row_height
             x_hex = self._hex_draw_left + cc * hex_cell
             vx = x_hex + (self._nibble * cw)
-            p.setPen(QColor(255, 100, 100))
+            p.setPen(theme_color("cursor"))
             p.drawLine(int(vx), cy + 2, int(vx), cy + self._row_height - 2)
 
     def _byte_at_point(self, pos: QPoint) -> tuple[str, int]:

@@ -89,8 +89,8 @@ class ByteToolsDock(QDockWidget):
             QSizePolicy.Policy.Preferred, QSizePolicy.Policy.MinimumExpanding
         )
         root = QVBoxLayout(inner)
-        root.setContentsMargins(6, 8, 6, 8)
-        root.setSpacing(10)
+        root.setContentsMargins(6, 6, 6, 6)
+        root.setSpacing(8)
 
         # —— 范围 ——
         self._grp_range = QGroupBox()

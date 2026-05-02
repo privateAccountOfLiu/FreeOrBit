@@ -1,4 +1,4 @@
-"""双文件二进制比较：独立子窗口，绿/红逐字节标示相同与差异。"""
+"""双文件二进制比较：独立子窗口，绿/红逐字节标示相同与差异，带字节对比矩阵。"""
 
 from __future__ import annotations
 
@@ -20,6 +20,8 @@ from PySide6.QtWidgets import (
 from freeorbit.model.binary_data_model import BinaryDataModel
 from freeorbit.view.hex_format import format_hex_dump_lines
 from freeorbit.view.hex_editor_view import HexEditorView
+from freeorbit.services.compare_matrix_widget import CompareMatrixWidget, _CompareMatrixThread
+from freeorbit.theme import TEXT_SECONDARY
 
 
 def _build_compare_highlights(
@@ -55,7 +57,7 @@ class CompareWindow(QDialog):
             | Qt.WindowType.WindowMinMaxButtonsHint
             | Qt.WindowType.WindowCloseButtonHint
         )
-        self.resize(1100, 720)
+        self.resize(1100, 900)
 
         self._path_a = ""
         self._path_b = ""
@@ -67,22 +69,43 @@ class CompareWindow(QDialog):
         self._left.set_model(self._left_model)
         self._right.set_model(self._right_model)
 
+        self._matrix_thread: Optional[_CompareMatrixThread] = None
+
         left_wrap = QWidget()
         ll = QVBoxLayout(left_wrap)
-        ll.setContentsMargins(4, 4, 4, 4)
-        ll.addWidget(QLabel("文件 A"))
+        ll.setContentsMargins(6, 6, 6, 6)
+        lbl_a = QLabel("文件 A")
+        lbl_a.setStyleSheet(f"font-weight: bold; color: {TEXT_SECONDARY};")
+        ll.addWidget(lbl_a)
         ll.addWidget(self._left, 1)
 
         right_wrap = QWidget()
         rl = QVBoxLayout(right_wrap)
-        rl.setContentsMargins(4, 4, 4, 4)
-        rl.addWidget(QLabel("文件 B"))
+        rl.setContentsMargins(6, 6, 6, 6)
+        lbl_b = QLabel("文件 B")
+        lbl_b.setStyleSheet(f"font-weight: bold; color: {TEXT_SECONDARY};")
+        rl.addWidget(lbl_b)
         rl.addWidget(self._right, 1)
 
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.addWidget(left_wrap)
-        splitter.addWidget(right_wrap)
-        splitter.setSizes([540, 540])
+        hex_splitter = QSplitter(Qt.Orientation.Horizontal)
+        hex_splitter.addWidget(left_wrap)
+        hex_splitter.addWidget(right_wrap)
+        hex_splitter.setSizes([540, 540])
+
+        # Comparison matrix section
+        matrix_wrap = QWidget()
+        ml = QVBoxLayout(matrix_wrap)
+        ml.setContentsMargins(6, 6, 6, 6)
+        self._matrix_title = QLabel("字节对比矩阵")
+        self._matrix_title.setStyleSheet(f"font-weight: bold; color: {TEXT_SECONDARY};")
+        ml.addWidget(self._matrix_title)
+        self._matrix_widget = CompareMatrixWidget()
+        ml.addWidget(self._matrix_widget, 1)
+
+        main_splitter = QSplitter(Qt.Orientation.Vertical)
+        main_splitter.addWidget(hex_splitter)
+        main_splitter.addWidget(matrix_wrap)
+        main_splitter.setSizes([460, 300])
 
         top_bar = QHBoxLayout()
         btn_export = QPushButton("导出相同部分…")
@@ -93,7 +116,7 @@ class CompareWindow(QDialog):
 
         lay = QVBoxLayout(self)
         lay.addLayout(top_bar)
-        lay.addWidget(splitter, 1)
+        lay.addWidget(main_splitter, 1)
 
         self._left.verticalScrollBar().valueChanged.connect(self._sync_from_left)
         self._right.verticalScrollBar().valueChanged.connect(self._sync_from_right)
@@ -119,6 +142,40 @@ class CompareWindow(QDialog):
         self._left.refresh_display()
         self._right.refresh_display()
         self.setWindowTitle(f"二进制比较 — {Path(path_a).name} / {Path(path_b).name}")
+
+        # Update matrix labels and start computation
+        name_a = Path(path_a).name
+        name_b = Path(path_b).name
+        self._matrix_widget.set_labels(name_b, name_a)
+        self._matrix_title.setText(f"字节对比矩阵 — {name_a} (横) / {name_b} (纵)")
+
+        self._start_matrix()
+
+    def _start_matrix(self) -> None:
+        """Start background thread to compute the comparison matrix."""
+        if self._matrix_thread is not None:
+            self._matrix_thread.requestInterruption()
+            self._matrix_thread.wait(5000)
+            self._matrix_thread = None
+        la, lb = len(self._left_model), len(self._right_model)
+        if la == 0 or lb == 0:
+            return
+        # Sample step defaults to 1 (every byte); scale up for very large files
+        max_bytes = max(la, lb)
+        sample_step = max(1, max_bytes // 4096)
+        self._matrix_thread = _CompareMatrixThread(
+            self._left_model, self._right_model,
+            sample_step=sample_step, max_dim=4096,
+        )
+        self._matrix_thread.image_ready.connect(self._matrix_widget.set_image)
+        self._matrix_thread.start()
+
+    def closeEvent(self, event) -> None:
+        if self._matrix_thread is not None:
+            self._matrix_thread.requestInterruption()
+            self._matrix_thread.wait(5000)
+            self._matrix_thread = None
+        super().closeEvent(event)
 
     def _export_matching(self) -> None:
         """导出相同偏移处相等的字节：与主编辑器一致的地址 + Hex + ASCII 行格式。"""

@@ -42,11 +42,9 @@ from freeorbit.viewmodel.document_editor import DocumentEditor
 class MainWindow(QMainWindow):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self.resize(1100, 700)
+        self.resize(1280, 800)
 
         self._tabs = QTabWidget(self)
-        # 部分第三方样式会把标签页改为全大写，强制保持文件名为原文大小写
-        self._tabs.setStyleSheet("QTabBar::tab { text-transform: none; }")
         self._tabs.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
@@ -82,9 +80,9 @@ class MainWindow(QMainWindow):
         self._disasm_dock.hide()
 
         # 四周工具区默认偏窄，中央编辑区占更多空间（用户仍可拖曳调整）
-        self._bookmark_dock.setMaximumWidth(260)
-        self._search_dock.setMaximumWidth(300)
-        self._struct_dock.setMaximumWidth(300)
+        self._bookmark_dock.setMaximumWidth(280)
+        self._search_dock.setMaximumWidth(320)
+        self._struct_dock.setMaximumWidth(320)
         # 底部脚本区默认占用略少，用户仍可拖曳边缘拉大
         self._script_dock.setMaximumHeight(300)
         # 填充/字节运算内容较多，不限制最大高度，由面板内滚动条承载

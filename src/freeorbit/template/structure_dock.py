@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 from freeorbit.i18n import tr
+from freeorbit.theme import ACCENT_DANGER, TEXT_SECONDARY
 from freeorbit.template.builtin_templates import list_builtin_templates
 from freeorbit.template.fields import (
     FieldNode,
@@ -61,11 +62,11 @@ class StructureDock(QDockWidget):
         self.setWidget(w)
         lay = QVBoxLayout(w)
         lay.setContentsMargins(6, 6, 6, 6)
-        lay.setSpacing(4)
+        lay.setSpacing(6)
 
         self._toolbar_area = QWidget()
         grp = QVBoxLayout(self._toolbar_area)
-        grp.setSpacing(4)
+        grp.setSpacing(6)
         row = QHBoxLayout()
         row.setSpacing(12)
 
@@ -116,14 +117,15 @@ class StructureDock(QDockWidget):
         super().showEvent(event)
         self._apply_filename_elide()
 
-    def bind_document(self, doc: DocumentEditor) -> None:
+    def bind_document(self, doc: Optional[DocumentEditor]) -> None:
         if self._doc is not None:
             try:
                 self._doc.model().data_changed.disconnect(self._refresh)
             except TypeError:
                 pass
         self._doc = doc
-        doc.model().data_changed.connect(self._refresh)
+        if doc is not None:
+            doc.model().data_changed.connect(self._refresh)
         self._refresh()
 
     def retranslate_ui(self) -> None:
@@ -221,12 +223,12 @@ class StructureDock(QDockWidget):
 
         if err and self._template_module is not None and self._template_path:
             # 错误态使用醒目红色（与系统按钮样式并存）
-            self._lbl_status.setStyleSheet("color: #a40000;")
+            self._lbl_status.setStyleSheet(f"color: {ACCENT_DANGER};")
             self._lbl_status.setToolTip(
                 f"{Path(self._template_path).resolve()}\n\n{err}"
             )
         else:
-            self._lbl_status.setStyleSheet("color: palette(Mid);")
+            self._lbl_status.setStyleSheet(f"color: {TEXT_SECONDARY};")
 
         self._apply_filename_elide()
 

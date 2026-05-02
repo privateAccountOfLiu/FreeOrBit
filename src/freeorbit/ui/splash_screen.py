@@ -1,9 +1,9 @@
-"""启动画面：与系统主题协调的样式 + 0～100% 线性进度条。"""
+"""启动画面：暗色主题样式 + 0～100% 线性进度条。"""
 
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QGuiApplication, QPalette
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QLabel,
     QProgressBar,
@@ -12,47 +12,46 @@ from PySide6.QtWidgets import (
 )
 
 from freeorbit.i18n import tr
+from freeorbit.theme import (
+    ACCENT_PRIMARY,
+    SURFACE_DARK,
+    SURFACE_DARKEST,
+    SURFACE_LIGHT,
+    TEXT_PRIMARY,
+    TEXT_SECONDARY,
+)
 
 
 def _splash_stylesheet() -> str:
-    """使用当前应用调色板，与 WindowsVista 等原生样式一致。"""
-    pal = QGuiApplication.palette()
-    bg = pal.color(QPalette.ColorRole.Window).name()
-    border = pal.color(QPalette.ColorRole.Mid).name()
-    fg = pal.color(QPalette.ColorRole.WindowText).name()
-    muted = pal.color(QPalette.ColorRole.Mid).name()
-    status = pal.color(QPalette.ColorRole.Dark).name()
-    hl = pal.color(QPalette.ColorRole.Highlight).name()
-    base = pal.color(QPalette.ColorRole.Base).name()
     return f"""
             SplashScreen {{
-                background-color: {bg};
-                border: 1px solid {border};
+                background-color: {SURFACE_DARKEST};
+                border: 1px solid {SURFACE_LIGHT};
             }}
             QLabel#splashTitle {{
-                color: {fg};
+                color: {TEXT_PRIMARY};
                 font-size: 22pt;
                 font-weight: 600;
             }}
             QLabel#splashSub {{
-                color: {muted};
+                color: {TEXT_SECONDARY};
                 font-size: 10pt;
             }}
             QLabel#splashStatus {{
-                color: {status};
+                color: {TEXT_SECONDARY};
                 font-size: 9pt;
             }}
             QProgressBar {{
-                border: 1px solid {border};
+                border: 1px solid {SURFACE_LIGHT};
                 border-radius: 3px;
-                background-color: {base};
+                background-color: {SURFACE_DARK};
                 min-height: 22px;
                 max-height: 22px;
                 text-align: center;
-                color: {fg};
+                color: {TEXT_PRIMARY};
             }}
             QProgressBar::chunk {{
-                background-color: {hl};
+                background-color: {ACCENT_PRIMARY};
             }}
             """
 

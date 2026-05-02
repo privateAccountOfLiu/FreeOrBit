@@ -137,6 +137,8 @@ class SearchDock(QDockWidget):
         w = QWidget()
         self.setWidget(w)
         lay = QVBoxLayout(w)
+        lay.setContentsMargins(6, 6, 6, 6)
+        lay.setSpacing(8)
         row_mode = QHBoxLayout()
         self._lbl_mode = QLabel()
         row_mode.addWidget(self._lbl_mode)

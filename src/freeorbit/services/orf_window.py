@@ -48,6 +48,7 @@ from PySide6.QtWidgets import (
 )
 
 from freeorbit.i18n import tr
+from freeorbit.theme import theme_color
 from freeorbit.viewmodel.document_editor import DocumentEditor
 
 # 名称 -> (宽度, struct fmt, 是否浮点)
@@ -368,8 +369,9 @@ class _OffsetBinHistogram(QWidget):
             pts.append(QPointF(cx, yv))
             x += w
 
-        line_col = QColor(80, 140, 220)
-        fill_col = QColor(80, 140, 220, 55)
+        line_col = theme_color("chart_line")
+        fill_col = QColor(theme_color("chart_fill"))
+        fill_col.setAlpha(55)
         if len(pts) == 1:
             p.setPen(QPen(line_col, 2))
             p.drawEllipse(pts[0], 3, 3)
@@ -414,7 +416,7 @@ if _HAS_QTCHARTS:
             self._line_series = QLineSeries()
             self._line_series.setPointsVisible(True)
 
-            line_col = QColor(45, 95, 185)
+            line_col = theme_color("chart_line")
             self._line_series.setPen(QPen(line_col, 2))
             self._line_series.setColor(line_col)
 
@@ -446,8 +448,9 @@ if _HAS_QTCHARTS:
             p.setRenderHint(QPainter.RenderHint.Antialiasing)
             clip = self.chart().plotArea()
             p.setClipRect(clip.toRect())
-            bar_fill = QColor(90, 145, 220, 140)
-            border = QColor(55, 105, 175)
+            bar_fill = QColor(theme_color("chart_bar"))
+            bar_fill.setAlpha(140)
+            border = theme_color("chart_border")
             pen = QPen(border, 1)
             for i, (_, _, cnt) in enumerate(self._bins_data):
                 fc = float(cnt)

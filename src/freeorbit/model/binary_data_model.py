@@ -108,9 +108,13 @@ class BinaryDataModel(QObject):
 
         if use_mmap and size > 0:
             # 读写映射以便覆盖写入；插入/删除需复制到内存（见 ensure_mutable_copy）
-            f = open(p, "r+b")
+            try:
+                f = open(p, "r+b")
+                self._mmap = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_WRITE)
+            except PermissionError:
+                f = open(p, "rb")
+                self._mmap = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
             self._mmap_file = f
-            self._mmap = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_WRITE)
             self._use_mmap = True
             self._buffer = bytearray()
         else:

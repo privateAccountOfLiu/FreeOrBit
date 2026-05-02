@@ -128,6 +128,7 @@ class ConvertSelectionDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("转换选区为…")
+        self.setMinimumWidth(480)
         self.resize(560, 420)
         self._model = model
         self._hex_view = hex_view

@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
 
 from freeorbit.dialogs.frida_android_risk_dialog import FridaAndroidInstallRiskDialog
 from freeorbit.i18n import tr
+from freeorbit.theme import TEXT_SECONDARY
 from freeorbit.platform import android_adb
 from freeorbit.platform import android_frida_install as frida_inst
 from freeorbit.platform import android_settings as android_st
@@ -318,11 +319,11 @@ class AndroidDebugPanel(QWidget):
         self._sig_frida_script_log.connect(self._frida_log_script, q)
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(10, 10, 10, 10)
+        root.setContentsMargins(6, 6, 6, 6)
 
         self._legal_hint = QLabel(tr("android.hook_legal_hint"))
         self._legal_hint.setWordWrap(True)
-        self._legal_hint.setStyleSheet("color: palette(mid);")
+        self._legal_hint.setStyleSheet(f"color: {TEXT_SECONDARY};")
 
         self._tabs = QTabWidget()
         root.addWidget(self._tabs, 1)

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Callable, Optional
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -30,6 +31,7 @@ from freeorbit.platform import frida_loader
 from freeorbit.template.auto_template import parse_rules_text
 
 from freeorbit.i18n import _LANG_EN, _LANG_ZH, current_language, set_language, tr
+from freeorbit.theme import TEXT_SECONDARY, current_theme, set_theme, apply_theme, _THEME_DARK, _THEME_LIGHT
 
 if TYPE_CHECKING:
     pass
@@ -94,7 +96,7 @@ class SettingsDialog(QDialog):
         fl = QFormLayout(self._page_lang)
         self._breadcrumb = QLabel()
         self._breadcrumb.setWordWrap(True)
-        self._breadcrumb.setStyleSheet("color: palette(mid); padding-bottom: 8px;")
+        self._breadcrumb.setStyleSheet(f"color: {TEXT_SECONDARY}; padding-bottom: 8px;")
         fl.addRow(self._breadcrumb)
         self._lang_combo = QComboBox()
         self._lang_combo.addItem(tr("settings.lang.zh"), _LANG_ZH)
@@ -110,7 +112,7 @@ class SettingsDialog(QDialog):
         lay_struct = QVBoxLayout(self._page_struct)
         self._breadcrumb_struct = QLabel()
         self._breadcrumb_struct.setWordWrap(True)
-        self._breadcrumb_struct.setStyleSheet("color: palette(mid); padding-bottom: 8px;")
+        self._breadcrumb_struct.setStyleSheet(f"color: {TEXT_SECONDARY}; padding-bottom: 8px;")
         lay_struct.addWidget(self._breadcrumb_struct)
         self._chk_auto_apply = QCheckBox()
         self._chk_auto_apply.setChecked(
@@ -124,7 +126,7 @@ class SettingsDialog(QDialog):
         lay_struct.addWidget(self._chk_auto_rules)
         self._lbl_rules_hint = QLabel()
         self._lbl_rules_hint.setWordWrap(True)
-        self._lbl_rules_hint.setStyleSheet("color: palette(mid);")
+        self._lbl_rules_hint.setStyleSheet(f"color: {TEXT_SECONDARY};")
         lay_struct.addWidget(self._lbl_rules_hint)
         self._rules_edit = QPlainTextEdit()
         self._rules_edit.setMinimumHeight(140)
@@ -142,7 +144,7 @@ class SettingsDialog(QDialog):
         lay_perm = QVBoxLayout(self._page_perm)
         self._breadcrumb_perm = QLabel()
         self._breadcrumb_perm.setWordWrap(True)
-        self._breadcrumb_perm.setStyleSheet("color: palette(mid); padding-bottom: 8px;")
+        self._breadcrumb_perm.setStyleSheet(f"color: {TEXT_SECONDARY}; padding-bottom: 8px;")
         lay_perm.addWidget(self._breadcrumb_perm)
         self._chk_admin_launch = QCheckBox()
         self._chk_admin_launch.setChecked(
@@ -151,7 +153,7 @@ class SettingsDialog(QDialog):
         lay_perm.addWidget(self._chk_admin_launch)
         self._lbl_perm_hint = QLabel()
         self._lbl_perm_hint.setWordWrap(True)
-        self._lbl_perm_hint.setStyleSheet("color: palette(mid);")
+        self._lbl_perm_hint.setStyleSheet(f"color: {TEXT_SECONDARY};")
         lay_perm.addWidget(self._lbl_perm_hint)
         lay_perm.addStretch(1)
         self._stack.addWidget(self._page_perm)
@@ -161,7 +163,7 @@ class SettingsDialog(QDialog):
         lay_and = QVBoxLayout(self._page_android)
         self._breadcrumb_android = QLabel()
         self._breadcrumb_android.setWordWrap(True)
-        self._breadcrumb_android.setStyleSheet("color: palette(mid); padding-bottom: 8px;")
+        self._breadcrumb_android.setStyleSheet(f"color: {TEXT_SECONDARY}; padding-bottom: 8px;")
         lay_and.addWidget(self._breadcrumb_android)
         form_and = QFormLayout()
         self._android_adb = QLineEdit()
@@ -198,11 +200,32 @@ class SettingsDialog(QDialog):
         lay_and.addWidget(self._lbl_android_frida_py)
         self._lbl_android_frida_hint = QLabel()
         self._lbl_android_frida_hint.setWordWrap(True)
-        self._lbl_android_frida_hint.setStyleSheet("color: palette(mid);")
+        self._lbl_android_frida_hint.setStyleSheet(f"color: {TEXT_SECONDARY};")
         lay_and.addWidget(self._lbl_android_frida_hint)
         lay_and.addStretch(1)
         self._stack.addWidget(self._page_android)
         self._refresh_android_version_label()
+
+        # ── Theme page (index 4) ──────────────────────────────────────
+        self._page_theme = QWidget()
+        lay_theme = QVBoxLayout(self._page_theme)
+        self._breadcrumb_theme = QLabel()
+        self._breadcrumb_theme.setWordWrap(True)
+        self._breadcrumb_theme.setStyleSheet(f"color: {TEXT_SECONDARY}; padding-bottom: 8px;")
+        lay_theme.addWidget(self._breadcrumb_theme)
+        form_theme = QFormLayout()
+        self._theme_combo = QComboBox()
+        self._theme_combo.addItem(tr("settings.theme.dark"), _THEME_DARK)
+        self._theme_combo.addItem(tr("settings.theme.light"), _THEME_LIGHT)
+        cur = current_theme()
+        ix = self._theme_combo.findData(cur)
+        if ix >= 0:
+            self._theme_combo.setCurrentIndex(ix)
+        self._lbl_theme = QLabel()
+        form_theme.addRow(self._lbl_theme, self._theme_combo)
+        lay_theme.addLayout(form_theme)
+        lay_theme.addStretch(1)
+        self._stack.addWidget(self._page_theme)
 
         body.addWidget(self._tree)
         body.addWidget(self._stack, 1)
@@ -242,6 +265,9 @@ class SettingsDialog(QDialog):
         try:
             self._tree.clear()
             root_item = QTreeWidgetItem([tr("settings.tree.appearance")])
+            theme_item = QTreeWidgetItem([tr("settings.tree.theme")])
+            theme_item.setData(0, Qt.ItemDataRole.UserRole, 4)
+            root_item.addChild(theme_item)
             struct_item = QTreeWidgetItem([tr("settings.tree.structure")])
             struct_item.setData(0, Qt.ItemDataRole.UserRole, 1)
             root_item.addChild(struct_item)
@@ -317,6 +343,13 @@ class SettingsDialog(QDialog):
                 self._lbl_perm_hint.setText(tr("settings.elevation.hint"))
             else:
                 self._lbl_perm_hint.setText(tr("settings.elevation.unix_hint"))
+        if self._breadcrumb_theme is not None:
+            self._breadcrumb_theme.setText(tr("settings.theme.breadcrumb"))
+        if self._lbl_theme is not None:
+            self._lbl_theme.setText(tr("settings.theme.label"))
+        if self._theme_combo is not None:
+            self._theme_combo.setItemText(0, tr("settings.theme.dark"))
+            self._theme_combo.setItemText(1, tr("settings.theme.light"))
         self._apply_perm_platform_state()
         self._apply_android_labels()
 
@@ -455,6 +488,14 @@ class SettingsDialog(QDialog):
             if self._on_apply_lang:
                 self._on_apply_lang()
 
+    def _save_theme_settings(self) -> None:
+        if self._theme_combo is None:
+            return
+        theme = self._theme_combo.currentData()
+        if theme in (_THEME_DARK, _THEME_LIGHT):
+            set_theme(str(theme))
+            apply_theme(QApplication.instance())
+
     def _notify_android_settings_changed(self) -> None:
         if self._on_android_settings_changed is not None:
             self._on_android_settings_changed()
@@ -463,6 +504,7 @@ class SettingsDialog(QDialog):
         self._apply_language_from_ui()
         if not self._validate_structure_rules():
             return
+        self._save_theme_settings()
         self._save_structure_settings()
         self._save_elevation_settings()
         self._save_android_settings()
@@ -473,6 +515,7 @@ class SettingsDialog(QDialog):
         self._apply_language_from_ui()
         if not self._validate_structure_rules():
             return
+        self._save_theme_settings()
         self._save_structure_settings()
         self._save_elevation_settings()
         self._save_android_settings()
