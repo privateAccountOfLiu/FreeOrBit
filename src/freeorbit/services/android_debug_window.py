@@ -1276,8 +1276,11 @@ class AndroidDebugPanel(QWidget):
                     self, tr("android.debug_window_title"),
                     f"IL2CPP bridge load failed: {e}\nContinuing without bridge."
                 )
-        # GUARD 在前保存原生 API；BRIDGE 在后合并 rpc.exports
-        full_js = _FRIDA_RPC_GUARD + "\n" + user_js + "\n" + _FRIDA_RPC_BRIDGE
+        # GUARD/BRIDGE 仅在非 IL2CPP 模式下使用；IL2CPP 桥接已自包含
+        if il2cpp_enabled:
+            full_js = user_js
+        else:
+            full_js = _FRIDA_RPC_GUARD + "\n" + user_js + "\n" + _FRIDA_RPC_BRIDGE
 
         self._frida_detach()
         self._btn_attach.setEnabled(False)
