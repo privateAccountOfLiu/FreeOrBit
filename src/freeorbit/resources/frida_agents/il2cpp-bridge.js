@@ -1,5 +1,5 @@
 📦
-138436 /src/freeorbit/resources/frida_agents/il2cpp-agent.js
+138787 /src/freeorbit/resources/frida_agents/il2cpp-agent.js
 ✄
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -3343,10 +3343,17 @@ ${this.isEnum ? `enum` : this.isStruct ? `struct` : this.isInterface ? `interfac
 
 // src/freeorbit/resources/frida_agents/il2cpp-agent.js
 init_node_globals();
-var il2cpp = (init_dist(), __toCommonJS(dist_exports));
-rpc.exports = {
-  ...il2cpp.exports,
-  dump: il2cpp.dump,
-  dumpTree: il2cpp.dumpTree,
-  installExceptionListener: il2cpp.installExceptionListener
-};
+try {
+  const il2cpp = (init_dist(), __toCommonJS(dist_exports));
+  rpc.exports = {
+    ...il2cpp.exports,
+    dump: il2cpp.dump,
+    dumpTree: il2cpp.dumpTree,
+    installExceptionListener: il2cpp.installExceptionListener
+  };
+  console.log("[il2cpp-bridge] initialized successfully");
+} catch (e) {
+  console.error("[il2cpp-bridge] initialization failed: " + e.message);
+  console.error("[il2cpp-bridge] This target may not be a Unity IL2CPP application.");
+  console.error("[il2cpp-bridge] The bridge is disabled; your custom script will still run.");
+}
