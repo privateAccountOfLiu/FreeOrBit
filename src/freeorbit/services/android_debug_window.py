@@ -1257,36 +1257,20 @@ class AndroidDebugPanel(QWidget):
             return
 
         user_js = self._frida_js.toPlainText().strip()
-        # IL2CPP 桥接（如果勾选，前置加载）
+        # IL2CPP 桥接（如果勾选，前置加载；由 frida-compile 预编译，无需过滤）
         if il2cpp_enabled:
             try:
                 import freeorbit
                 il2cpp_path = Path(freeorbit.__file__).resolve().parent / "resources" / "frida_agents" / "il2cpp-bridge.js"
                 if il2cpp_path.exists():
-                    raw = il2cpp_path.read_bytes()
-                    # 跳过 UTF-8 BOM
-                    if raw.startswith(b'\xef\xbb\xbf'):
-                        raw = raw[3:]
-                    text = raw.decode("utf-8", errors="replace")
-                    # 过滤 webpack bundle 标记行（📦、✄、chunk注释等非JS内容）
-                    lines = text.splitlines(True)
-                    js_start = 0
-                    valid_starters = ("var ", "function", "(function", "!function",
-                                      "const ", "let ", "class ", "d||", "e||")
-                    for i, line in enumerate(lines):
-                        stripped = line.strip()
-                        if stripped and any(stripped.startswith(p) for p in valid_starters):
-                            js_start = i
-                            break
-                    il2cpp_js = "".join(lines[js_start:])
-                    # 移除中间可能残留的 webpack chunk 分隔符
-                    import re
-                    # 匹配 📦 行、✄ 行等 webpack bundle 标记（非 ASCII 单/双字符行）
-                    il2cpp_js = re.sub(r'\n[^\S\n]*[^\x00-\x7f]+[^\S\n]*\n', '\n', il2cpp_js)
-                    # 匹配 "65867 /entry.js" 格式的 chunk 注释行
-                    il2cpp_js = re.sub(r'\n[^\S\n]*\d+\s+/entry\.js[^\S\n]*\n', '\n', il2cpp_js)
+                    il2cpp_js = il2cpp_path.read_text(encoding="utf-8")
                     if il2cpp_js.strip():
                         user_js = il2cpp_js.strip() + "\n" + user_js
+                else:
+                    QMessageBox.warning(
+                        self, tr("android.debug_window_title"),
+                        "IL2CPP bridge not found. Run: npm install && npx frida-compile"
+                    )
             except Exception as e:
                 QMessageBox.warning(
                     self, tr("android.debug_window_title"),
