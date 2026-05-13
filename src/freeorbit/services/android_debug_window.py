@@ -70,6 +70,130 @@ _FRIDA_RPC_GUARD = """
 })();
 """
 
+# 轻量 IL2CPP 内联桥接（无需外部 npm 依赖，直接解析 Unity IL2CPP 导出）
+_IL2CPP_INLINE_BRIDGE = """
+(function () {
+  var g = typeof globalThis !== "undefined" ? globalThis : this;
+  if (g.__fob_il2cpp_ok) return;
+  try {
+    // 查找包含 il2cpp 导出的模块（libil2cpp.so / GameAssembly.dll）
+    var mod = null;
+    Process.enumerateModules().forEach(function (m) {
+      if (!mod && (m.name.indexOf("il2cpp") !== -1 || m.name.indexOf("GameAssembly") !== -1)) {
+        mod = m;
+      }
+    });
+    if (!mod) throw new Error("No IL2CPP module found (libil2cpp.so/GameAssembly.dll)");
+
+    // 解析核心导出
+    function resolve(name, ret, args) {
+      var addr = Module.findExportByName(mod.name, name);
+      if (!addr) {
+        // 尝试常见变体（Unity 版本差异）
+        var alts = [];
+        if (name.indexOf("il2cpp_") === 0) alts.push("_" + name);
+        for (var i = 0; i < alts.length && !addr; i++) addr = Module.findExportByName(mod.name, alts[i]);
+      }
+      if (!addr) throw new Error("Export not found: " + name);
+      return new NativeFunction(addr, ret || "pointer", args || []);
+    }
+
+    var fns = {};
+
+    // 基础函数（根据实际需求按需解析）
+    function get_fn(name, ret, args) {
+      if (!fns[name]) fns[name] = resolve(name, ret, args);
+      return fns[name];
+    }
+
+    // 暴露简洁 API
+    var il2cpp = {
+      get domain()      { return get_fn("il2cpp_domain_get", "pointer", [])(); },
+      get corlib()      { return get_fn("il2cpp_get_corlib", "pointer", [])(); },
+
+      classFromName: function (img, ns, name) {
+        return get_fn("il2cpp_class_from_name", "pointer", ["pointer","pointer","pointer"])(
+          img, Memory.allocUtf8String(ns || ""), Memory.allocUtf8String(name));
+      },
+      className: function (klass) {
+        var p = get_fn("il2cpp_class_get_name", "pointer", ["pointer"])(klass);
+        return p.isNull() ? "?" : p.readCString();
+      },
+      classNamespace: function (klass) {
+        var p = get_fn("il2cpp_class_get_namespace", "pointer", ["pointer"])(klass);
+        return p.isNull() ? "" : p.readCString();
+      },
+      classParent: function (klass) {
+        return get_fn("il2cpp_class_get_parent", "pointer", ["pointer"])(klass);
+      },
+      classMethods: function (klass) {
+        var out = Memory.alloc(Process.pointerSize);
+        get_fn("il2cpp_class_get_methods", "pointer", ["pointer","pointer"])(klass, out);
+        return out.readPointer();
+      },
+      methodName: function (m) {
+        var p = get_fn("il2cpp_method_get_name", "pointer", ["pointer"])(m);
+        return p.isNull() ? "?" : p.readCString();
+      },
+      classFields: function (klass) {
+        var out = Memory.alloc(Process.pointerSize);
+        get_fn("il2cpp_class_get_fields", "pointer", ["pointer","pointer"])(klass, out);
+        return out.readPointer();
+      },
+      fieldName: function (f) {
+        var p = get_fn("il2cpp_field_get_name", "pointer", ["pointer"])(f);
+        return p.isNull() ? "?" : p.readCString();
+      },
+      fieldOffset: function (f) {
+        return get_fn("il2cpp_field_get_offset", "int32", ["pointer"])(f);
+      },
+      objectClass: function (obj) {
+        return get_fn("il2cpp_object_get_class", "pointer", ["pointer"])(obj);
+      },
+      objectNew: function (klass) {
+        return get_fn("il2cpp_object_new", "pointer", ["pointer"])(klass);
+      },
+      stringNew: function (s) {
+        return get_fn("il2cpp_string_new", "pointer", ["pointer"])(Memory.allocUtf8String(s));
+      },
+      stringChars: function (s) {
+        var p = get_fn("il2cpp_string_chars", "pointer", ["pointer"])(s);
+        return p.isNull() ? "" : p.readCString();
+      },
+      assemblyGetImage: function (asm) {
+        return get_fn("il2cpp_assembly_get_image", "pointer", ["pointer"])(asm);
+      },
+      domainAssemblies: function (domain) {
+        var out = Memory.alloc(Process.pointerSize);
+        var cnt = Memory.alloc(Process.pointerSize);
+        get_fn("il2cpp_domain_get_assemblies", "pointer", ["pointer","pointer","pointer"])(domain, cnt, out);
+        return { count: cnt.readU32(), ptr: out.readPointer() };
+      },
+      imageName: function (img) {
+        var p = get_fn("il2cpp_image_get_name", "pointer", ["pointer"])(img);
+        return p.isNull() ? "?" : p.readCString();
+      },
+      imageClassCount: function (img) {
+        return get_fn("il2cpp_image_get_class_count", "uint32", ["pointer"])(img);
+      },
+      imageGetClass: function (img, idx) {
+        return get_fn("il2cpp_image_get_class", "pointer", ["pointer","uint"])(img, idx);
+      },
+      free: function (p) {
+        get_fn("il2cpp_free", "void", ["pointer"])(p);
+      },
+    };
+
+    g.__fob_il2cpp = il2cpp;
+    g.__fob_il2cpp_ok = true;
+    console.log("[IL2CPP] bridge ready (" + mod.name + ")");
+  } catch (e) {
+    g.__fob_il2cpp_ok = false;
+    console.error("[IL2CPP] init failed: " + e.message);
+  }
+})();
+"""
+
 # 追加在用户脚本之后：合并 rpc.exports（避免用户整段 rpc.exports = {...} 覆盖内置读内存），
 # 并提供 readMemoryBlock 返回 {ok,msg,bytes} 便于区分「不可读」与真实错误。
 _FRIDA_RPC_BRIDGE = """
@@ -1257,30 +1381,11 @@ class AndroidDebugPanel(QWidget):
             return
 
         user_js = self._frida_js.toPlainText().strip()
-        # IL2CPP 桥接（如果勾选，前置加载；由 frida-compile 预编译，无需过滤）
+        # IL2CPP 内联桥接（无需外部文件，纯 Frida JS API）
         if il2cpp_enabled:
-            try:
-                import freeorbit
-                il2cpp_path = Path(freeorbit.__file__).resolve().parent / "resources" / "frida_agents" / "il2cpp-bridge.js"
-                if il2cpp_path.exists():
-                    il2cpp_js = il2cpp_path.read_text(encoding="utf-8")
-                    if il2cpp_js.strip():
-                        user_js = il2cpp_js.strip() + "\n" + user_js
-                else:
-                    QMessageBox.warning(
-                        self, tr("android.debug_window_title"),
-                        "IL2CPP bridge not found. Run: npm install && npx frida-compile"
-                    )
-            except Exception as e:
-                QMessageBox.warning(
-                    self, tr("android.debug_window_title"),
-                    f"IL2CPP bridge load failed: {e}\nContinuing without bridge."
-                )
-        # GUARD/BRIDGE 仅在非 IL2CPP 模式下使用；IL2CPP 桥接已自包含
-        if il2cpp_enabled:
-            full_js = user_js
-        else:
-            full_js = _FRIDA_RPC_GUARD + "\n" + user_js + "\n" + _FRIDA_RPC_BRIDGE
+            user_js = _IL2CPP_INLINE_BRIDGE + "\n" + user_js
+        # GUARD/BRIDGE 包裹（IL2CPP 桥接与 GUARD 兼容，可同时使用）
+        full_js = _FRIDA_RPC_GUARD + "\n" + user_js + "\n" + _FRIDA_RPC_BRIDGE
 
         self._frida_detach()
         self._btn_attach.setEnabled(False)
