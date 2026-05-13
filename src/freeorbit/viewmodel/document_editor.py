@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from PySide6.QtCore import QByteArray, QEvent, QMimeData, QPoint, Qt
-from PySide6.QtGui import QClipboard, QGuiApplication, QKeyEvent, QUndoStack
+from PySide6.QtGui import QAction, QClipboard, QGuiApplication, QKeyEvent, QKeySequence, QUndoStack
 from PySide6.QtWidgets import (
     QFileDialog,
     QMenu,
@@ -66,6 +66,9 @@ class DocumentEditor(QWidget):
         self._process_modules: list[ModuleInfo] = []
         # 主窗口标签文字覆盖（如 Frida dump 的说明性标题）；为 None 时用 file_path 或「未命名」
         self._tab_title_override: Optional[str] = None
+        # 页表导航（进程内存）：[帧号, ...]，page_size 默认为系统页大小
+        self._page_table: Optional[list[int]] = None
+        self._page_table_size: int = 4096
 
     def set_tab_title_override(self, title: Optional[str]) -> None:
         """设置标签页显示名；保存为文件后可置 None 以恢复用文件名。"""
@@ -73,6 +76,29 @@ class DocumentEditor(QWidget):
 
     def tab_title_override(self) -> Optional[str]:
         return self._tab_title_override
+
+    def set_page_table(self, frames: Optional[list[int]], page_size: int = 4096) -> None:
+        """设置进程内存页表映射：逻辑页 → 物理帧号。用于 G 跳转时的地址转换。"""
+        self._page_table = frames
+        self._page_table_size = page_size
+
+    def page_table(self) -> Optional[list[int]]:
+        return self._page_table
+
+    def translate_via_page_table(self, logical_offset: int) -> tuple[int, int, int]:
+        """通过页表将逻辑偏移转换为物理地址。
+        返回 (physical_addr, page_index, frame_number)。
+        无页表时返回 (logical_offset, -1, -1)。
+        """
+        if not self._page_table:
+            return (logical_offset, -1, -1)
+        ps = self._page_table_size
+        page_idx = logical_offset // ps
+        page_off = logical_offset % ps
+        if page_idx < 0 or page_idx >= len(self._page_table):
+            raise ValueError(f"逻辑偏移 0x{logical_offset:X} 超出页表范围（{len(self._page_table)} 页）")
+        frame = self._page_table[page_idx]
+        return (frame * ps + page_off, page_idx, frame)
 
     def set_external_hooks(
         self,
@@ -188,12 +214,22 @@ class DocumentEditor(QWidget):
         *,
         skip_discard_confirm: bool = False,
     ) -> bool:
-        """切换到包含 target_va 的内存页并重新读取；成功返回 True。"""
+        """切换到包含 target_va 的内存页并重新读取；成功返回 True。支持页表地址转换。"""
         from freeorbit.platform import win_memory
 
         m = self._model
         if m.external_kind != "process" or self._refresh_pid is None:
             return False
+
+        # ── 页表地址转换 ───────────────────────────────────────────
+        page_idx = -1
+        frame_num = -1
+        if self._page_table:
+            try:
+                target_va, page_idx, frame_num = self.translate_via_page_table(target_va)
+            except ValueError as e:
+                QMessageBox.warning(parent, tr("open_process.title"), str(e))
+                return False
         if m.modified and not skip_discard_confirm:
             r = QMessageBox.question(
                 parent,
@@ -401,8 +437,55 @@ class DocumentEditor(QWidget):
 
     def _on_hex_context_menu(self, global_pos: QPoint) -> None:
         menu = QMenu(self)
-        menu.addAction(tr("ctx.export"), self.export_selection_to_file)
-        menu.addAction(tr("ctx.convert"), self.open_convert_selection_dialog)
+
+        # 图标颜色（跟随主题文字色）
+        try:
+            import qtawesome as qta
+            from PySide6.QtGui import QPalette
+            color = self.palette().color(QPalette.ColorRole.WindowText).name()
+        except Exception:
+            qta = None
+            color = "#cccccc"
+
+        # 复制 Hex (Ctrl+C)
+        act_copy = QAction(tr("ctx.copy_hex"), self)
+        act_copy.setShortcut(QKeySequence.Copy)
+        if qta:
+            act_copy.setIcon(qta.icon("fa5s.copy", color=color))
+        act_copy.triggered.connect(self._copy)
+        menu.addAction(act_copy)
+
+        # 复制 ASCII
+        act_ascii = QAction(tr("ctx.copy_ascii"), self)
+        if qta:
+            act_ascii.setIcon(qta.icon("fa5s.font", color=color))
+        act_ascii.triggered.connect(self._copy_ascii)
+        menu.addAction(act_ascii)
+
+        # 粘贴 (Ctrl+V)
+        act_paste = QAction(tr("ctx.paste"), self)
+        act_paste.setShortcut(QKeySequence.Paste)
+        if qta:
+            act_paste.setIcon(qta.icon("fa5s.paste", color=color))
+        act_paste.triggered.connect(self._paste)
+        menu.addAction(act_paste)
+
+        menu.addSeparator()
+
+        # 导出选区
+        act_export = QAction(tr("ctx.export"), self)
+        if qta:
+            act_export.setIcon(qta.icon("fa5s.file-export", color=color))
+        act_export.triggered.connect(self.export_selection_to_file)
+        menu.addAction(act_export)
+
+        # 转换选区
+        act_convert = QAction(tr("ctx.convert"), self)
+        if qta:
+            act_convert.setIcon(qta.icon("fa5s.exchange-alt", color=color))
+        act_convert.triggered.connect(self.open_convert_selection_dialog)
+        menu.addAction(act_convert)
+
         menu.exec(global_pos)
 
     def export_selection_to_file(self) -> None:
@@ -561,6 +644,7 @@ class DocumentEditor(QWidget):
         return (a, b)
 
     def _copy(self) -> None:
+        """复制 Hex 字节流（如 FF06789A）到剪贴板。"""
         a, b = self._hex.selection_range()
         if a == b:
             a = self._hex.cursor_position()
@@ -573,6 +657,19 @@ class DocumentEditor(QWidget):
         md.setText(data.hex().upper())
         md.setData("application/octet-stream", QByteArray(data))
         QGuiApplication.clipboard().setMimeData(md)
+
+    def _copy_ascii(self) -> None:
+        """复制选区 ASCII 文本到剪贴板。"""
+        a, b = self._hex.selection_range()
+        if a == b:
+            a = self._hex.cursor_position()
+            b = a + 1
+        if b <= a or a >= len(self._model):
+            return
+        b = min(b, len(self._model))
+        data = self._model.read(a, b - a)
+        text = "".join(chr(b) if 32 <= b < 127 else "." for b in data)
+        QGuiApplication.clipboard().setText(text)
 
     def _cut(self) -> None:
         self._copy()

@@ -28,7 +28,7 @@ freeorbit = "freeorbit.__main__:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-freeorbit = ["resources/*.ico", "resources/templates/*.py"]
+freeorbit = ["resources/*.ico", "resources/templates/*.py", "resources/frida_agents/*.js"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
 )
 
 from freeorbit.dialogs.frida_android_risk_dialog import FridaAndroidInstallRiskDialog
+from freeorbit.dialogs.frida_attach_dialog import FridaAttachDialog
 from freeorbit.i18n import tr
 from freeorbit.theme import TEXT_SECONDARY
 from freeorbit.platform import android_adb
@@ -219,7 +220,7 @@ class _CallableThread(QThread):
 
 
 class _FridaAttachThread(QThread):
-    """在后台线程执行 Frida 枚举设备、附加与脚本加载（避免阻塞 UI）。"""
+    """在后台线程执行 Frida 设备枚举、附加/生成与脚本加载（避免阻塞 UI）。"""
 
     attached = Signal(object, object, object)  # session, script, device
     failed = Signal(str)
@@ -231,6 +232,17 @@ class _FridaAttachThread(QThread):
         serial: Optional[str],
         target: str,
         full_js: str,
+        # ── FridaAttachDialog 参数 ──
+        mode: str = "attach",
+        device_id: str = "",
+        spawn_args: Optional[list[str]] = None,
+        realm: Optional[str] = None,
+        persist_timeout: Optional[int] = None,
+        cwd: Optional[str] = None,
+        env: Optional[dict[str, str]] = None,
+        stdio: Optional[str] = None,
+        aux: Optional[dict] = None,
+        il2cpp_enabled: bool = False,
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
@@ -239,6 +251,16 @@ class _FridaAttachThread(QThread):
         self._serial = serial
         self._target = target
         self._full_js = full_js
+        self._mode = mode
+        self._device_id = device_id
+        self._spawn_args = spawn_args or []
+        self._realm = realm
+        self._persist_timeout = persist_timeout
+        self._cwd = cwd
+        self._env = env
+        self._stdio = stdio
+        self._aux = aux
+        self._il2cpp_enabled = il2cpp_enabled
 
     def run(self) -> None:
         from freeorbit.platform import frida_loader
@@ -248,40 +270,62 @@ class _FridaAttachThread(QThread):
 
         try:
             dm = frida.get_device_manager()
+            # 设备选择优先级：remote_host > serial > device_id(USB) > 自动 USB
             if self._remote_host:
                 gr = getattr(frida, "get_remote_device", None)
                 if callable(gr):
                     dev = gr(self._remote_host)
                 else:
                     dev = dm.add_remote_device(self._remote_host)
+            elif self._serial:
+                dev = dm.get_device(self._serial, timeout=5)
+            elif self._device_id:
+                dev = dm.get_device(self._device_id, timeout=5)
             else:
-                if self._serial:
-                    dev = dm.get_device(self._serial, timeout=5)
-                else:
-                    try:
-                        dev = frida.get_usb_device(timeout=5)
-                    except Exception:
-                        dev = None
-                        for d in dm.enumerate_devices():
-                            if getattr(d, "id", "") != "local":
-                                dev = d
-                                break
-                        if dev is None:
-                            raise RuntimeError(tr("android.frida_no_device"))
+                try:
+                    dev = frida.get_usb_device(timeout=5)
+                except Exception:
+                    dev = None
+                    for d in dm.enumerate_devices():
+                        if getattr(d, "id", "") != "local":
+                            dev = d
+                            break
+                    if dev is None:
+                        raise RuntimeError(tr("android.frida_no_device"))
 
             def on_message(message: object, data: Optional[bytes]) -> None:
-                # Frida 在独立线程回调，必须通过 Signal 投递到 Qt 主线程再写控件
                 self._panel._dispatch_frida_message(message, data)
 
-            # console.log 在 frida.core.Script._on_message 中单独走 _log_handler，
-            # 不会进入 on("message")，必须 set_log_handler 才能显示到脚本输出框
             def on_console_log(level: str, text: str) -> None:
                 self._panel._dispatch_frida_console_log(level, text)
 
-            if self._target.isdigit():
-                session = dev.attach(int(self._target))
+            # 附加或生成
+            if self._mode == "spawn":
+                pid = dev.spawn(
+                    self._target,
+                    argv=self._spawn_args if self._spawn_args else None,
+                    env=self._env if self._env else None,
+                    cwd=self._cwd if self._cwd else None,
+                    stdio=self._stdio if self._stdio else None,
+                    aux=self._aux if self._aux else None,
+                    realm=self._realm if self._realm else None,
+                )
+                session = dev.attach(pid)
+                # 如设置了持久化超时，启用子进程持续
+                if self._persist_timeout is not None and self._persist_timeout > 0:
+                    try:
+                        dev.resume(pid)
+                    except Exception:
+                        pass
             else:
-                session = dev.attach(self._target)
+                # 附加模式，支持 realm 参数（Frida 17.x）
+                kwargs = {}
+                if self._realm:
+                    kwargs["realm"] = self._realm
+                if self._target.isdigit():
+                    session = dev.attach(int(self._target), **kwargs)
+                else:
+                    session = dev.attach(self._target, **kwargs)
 
             script = session.create_script(self._full_js)
             script.on("message", on_message)
@@ -435,8 +479,11 @@ class AndroidDebugPanel(QWidget):
         self._btn_detach = QPushButton(tr("android.frida_detach"))
         self._btn_detach.clicked.connect(self._frida_detach)
         self._btn_detach.setEnabled(False)
+        self._btn_adv = QPushButton(tr("android.frida_advanced"))
+        self._btn_adv.clicked.connect(self._open_frida_advanced_settings)
         row_f.addWidget(self._btn_attach)
         row_f.addWidget(self._btn_detach)
+        row_f.addWidget(self._btn_adv)
         row_f.addStretch(1)
         lay_f.addLayout(row_f)
 
@@ -1124,6 +1171,43 @@ class AndroidDebugPanel(QWidget):
                 return fn(*args)
         return None
 
+    def _save_frida_dialog_params(self, dlg: FridaAttachDialog) -> None:
+        """从对话框提取参数并持久化到 QSettings。"""
+        from freeorbit.platform.android_settings import save_frida_params
+        try:
+            aux_text = dlg._aux.toPlainText().strip() if dlg._aux else ""
+            env_text = dlg._env.toPlainText().strip() if dlg._env else ""
+        except Exception:
+            aux_text, env_text = "", ""
+        save_frida_params(
+            mode=dlg.attach_mode(),
+            device_id=dlg.device_id(),
+            il2cpp=dlg.il2cpp_enabled(),
+            spawn_args=dlg._args.text().strip() if dlg._args else "",
+            realm=dlg.realm() or "",
+            persist=dlg.persist_timeout() or 0,
+            cwd=dlg.cwd() or "",
+            env_text=env_text,
+            stdio=dlg.stdio() or "",
+            aux_text=aux_text,
+            target=dlg.target(),
+        )
+
+    def _open_frida_advanced_settings(self) -> None:
+        """打开 Frida 高级参数配置对话框（仅保存设置，不附加）。"""
+        from freeorbit.platform.android_settings import load_frida_params
+
+        saved = load_frida_params()
+        target = self._frida_target.text().strip()
+        dlg = FridaAttachDialog(self, default_target=target or saved.get("target", ""))
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        # 仅保存参数，不附加
+        self._save_frida_dialog_params(dlg)
+        # 回写 target 到主面板
+        self._frida_target.setText(dlg.target())
+
     def _frida_attach(self) -> None:
         if not _frida_available():
             QMessageBox.information(
@@ -1131,7 +1215,38 @@ class AndroidDebugPanel(QWidget):
             )
             return
 
-        target = self._frida_target.text().strip()
+        # ── 使用已保存参数（不弹对话框）─────────────────────────────
+        from freeorbit.platform.android_settings import load_frida_params
+
+        saved = load_frida_params()
+        target = self._frida_target.text().strip() or saved.get("target", "")
+        mode = saved.get("mode", "attach")
+        device_id = saved.get("device_id", "")
+        spawn_args_str = saved.get("spawn_args", "")
+        spawn_args = spawn_args_str.split() if spawn_args_str else []
+        realm = saved.get("realm") or None
+        persist_timeout = saved.get("persist") or None
+        cwd = saved.get("cwd") or None
+        env = None
+        env_text = saved.get("env", "")
+        if env_text:
+            env = {}
+            for line in env_text.splitlines():
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    env[k.strip()] = v.strip()
+        stdio = saved.get("stdio") or None
+        aux = None
+        aux_text = saved.get("aux", "")
+        if aux_text:
+            import json
+            try:
+                aux = json.loads(aux_text)
+            except json.JSONDecodeError:
+                pass
+        il2cpp_enabled = saved.get("il2cpp", False)
+
         if not target:
             QMessageBox.warning(
                 self, tr("android.debug_window_title"), tr("android.frida_need_target")
@@ -1142,6 +1257,41 @@ class AndroidDebugPanel(QWidget):
             return
 
         user_js = self._frida_js.toPlainText().strip()
+        # IL2CPP 桥接（如果勾选，前置加载）
+        if il2cpp_enabled:
+            try:
+                import freeorbit
+                il2cpp_path = Path(freeorbit.__file__).resolve().parent / "resources" / "frida_agents" / "il2cpp-bridge.js"
+                if il2cpp_path.exists():
+                    raw = il2cpp_path.read_bytes()
+                    # 跳过 UTF-8 BOM
+                    if raw.startswith(b'\xef\xbb\xbf'):
+                        raw = raw[3:]
+                    text = raw.decode("utf-8", errors="replace")
+                    # 过滤 webpack bundle 标记行（📦、✄、chunk注释等非JS内容）
+                    lines = text.splitlines(True)
+                    js_start = 0
+                    valid_starters = ("var ", "function", "(function", "!function",
+                                      "const ", "let ", "class ", "d||", "e||")
+                    for i, line in enumerate(lines):
+                        stripped = line.strip()
+                        if stripped and any(stripped.startswith(p) for p in valid_starters):
+                            js_start = i
+                            break
+                    il2cpp_js = "".join(lines[js_start:])
+                    # 移除中间可能残留的 webpack chunk 分隔符
+                    import re
+                    # 匹配 📦 行、✄ 行等 webpack bundle 标记（非 ASCII 单/双字符行）
+                    il2cpp_js = re.sub(r'\n[^\S\n]*[^\x00-\x7f]+[^\S\n]*\n', '\n', il2cpp_js)
+                    # 匹配 "65867 /entry.js" 格式的 chunk 注释行
+                    il2cpp_js = re.sub(r'\n[^\S\n]*\d+\s+/entry\.js[^\S\n]*\n', '\n', il2cpp_js)
+                    if il2cpp_js.strip():
+                        user_js = il2cpp_js.strip() + "\n" + user_js
+            except Exception as e:
+                QMessageBox.warning(
+                    self, tr("android.debug_window_title"),
+                    f"IL2CPP bridge load failed: {e}\nContinuing without bridge."
+                )
         # GUARD 在前保存原生 API；BRIDGE 在后合并 rpc.exports
         full_js = _FRIDA_RPC_GUARD + "\n" + user_js + "\n" + _FRIDA_RPC_BRIDGE
 
@@ -1159,6 +1309,16 @@ class AndroidDebugPanel(QWidget):
             serial,
             target,
             full_js,
+            mode=mode,
+            device_id=device_id,
+            spawn_args=spawn_args,
+            realm=realm,
+            persist_timeout=persist_timeout,
+            cwd=cwd,
+            env=env,
+            stdio=stdio,
+            aux=aux,
+            il2cpp_enabled=il2cpp_enabled,
             parent=self,
         )
         self._frida_attach_thread = th

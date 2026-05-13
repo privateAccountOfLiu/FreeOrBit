@@ -172,6 +172,21 @@ class GotoOffsetDialog(QDialog):
         ):
             rb = doc.process_refresh_base()
             assert rb is not None
+            # ── 页表地址转换 ─────────────────────────────────────────
+            page_table = doc.page_table()
+            if page_table:
+                try:
+                    phys_addr, page_idx, frame_num = doc.translate_via_page_table(off)
+                except ValueError as e:
+                    QMessageBox.warning(self, tr("goto.title"), str(e))
+                    return
+                # 显示页表转换信息
+                body_text = tr("goto.page_switch_body").format(va=off) + (
+                    f"\nPage[{page_idx}] → Frame[{frame_num}] → 0x{phys_addr:08X}"
+                )
+            else:
+                phys_addr = off
+                body_text = tr("goto.page_switch_body").format(va=off)
             # 1) 当前缓冲内的虚拟地址
             if rb <= off < rb + n:
                 idx = off - rb
@@ -185,17 +200,17 @@ class GotoOffsetDialog(QDialog):
                 self._hex.select_single_byte(off)
                 self.accept()
                 return
-            # 3) 切换分页
+            # 3) 切换分页（使用转换后的物理地址）
             r = QMessageBox.question(
                 self,
                 tr("goto.page_switch_title"),
-                tr("goto.page_switch_body").format(va=off),
+                body_text,
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No,
             )
             if r != QMessageBox.StandardButton.Yes:
                 return
-            if doc.switch_process_memory_page(off, self, skip_discard_confirm=True):
+            if doc.switch_process_memory_page(phys_addr, self, skip_discard_confirm=True):
                 _push_history(self._settings, raw.strip())
                 self.accept()
             return

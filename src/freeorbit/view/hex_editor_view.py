@@ -20,15 +20,19 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QFrame, QScrollArea, QSizePolicy, QWidget
 
-from freeorbit.theme import theme_color, TEXT_PRIMARY
+from freeorbit.theme import theme_color, TEXT_PRIMARY, TEXT_SECONDARY, SURFACE_LIGHT
 
 if TYPE_CHECKING:
     from freeorbit.model.binary_data_model import BinaryDataModel
 
-# 每行最大字节数（视口足够宽时可为 16，否则为 8）
+# 每行最大字节数（视口足够宽时可为 16，否则为 8 或 4）
 MAX_BYTES_PER_LINE = 16
 # 默认每行字节数（启动与窄视口）
 DEFAULT_BYTES_PER_LINE = 8
+# 列标题行高度（字节偏移标尺）
+_HEADER_HEIGHT = 18
+# 4 字节分组额外间距（像素）
+_GROUP_GAP = 3
 # Qt 单维控件像素上限；超过时 setFixedSize 会告警且布局异常
 _QT_WIDGET_MAX_PX = 16777215
 
@@ -64,6 +68,42 @@ class _HexCanvas(QWidget):
     def leaveEvent(self, event: QEvent) -> None:
         super().leaveEvent(event)
         self._editor._canvas_leave()
+
+
+class _HeaderWidget(QWidget):
+    """浮动于视口顶部的固定列标题行（字节偏移标尺 00-0F）。"""
+
+    def __init__(self, editor: "HexEditorView", parent: QWidget) -> None:
+        super().__init__(parent)
+        self._editor = editor
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+
+    def paintEvent(self, event: QPaintEvent) -> None:
+        editor = self._editor
+        p = QPainter(self)
+        p.setFont(editor._font)
+        palette = editor.palette()
+        header_bg = QColor(palette.color(QPalette.ColorRole.AlternateBase))
+        p.fillRect(self.rect(), header_bg)
+
+        header_font = QFont(editor._font)
+        header_font.setPointSize(max(7, editor._font.pointSize() - 2))
+        p.setFont(header_font)
+        p.setPen(QColor(TEXT_SECONDARY))
+        fm = QFontMetrics(header_font)
+        cw = editor._fm.horizontalAdvance("0")
+        h_scroll = editor.horizontalScrollBar().value()
+        for col in range(editor._bytes_per_line):
+            xh = editor._x_hex_for_col(col) - h_scroll
+            lbl = f"{col:02X}"
+            tw = fm.horizontalAdvance(lbl)
+            # 两个 hex 字符的视觉中心在 xh + cw（两 nibble 中间）
+            cx = xh + cw - tw / 2.0
+            p.drawText(int(cx), _HEADER_HEIGHT - 3, lbl)
+        p.setFont(editor._font)
+        # 底部分隔线
+        p.setPen(QColor(SURFACE_LIGHT))
+        p.drawLine(0, self.height() - 1, self.width(), self.height() - 1)
 
 
 class HexEditorView(QScrollArea):
@@ -129,10 +169,27 @@ class HexEditorView(QScrollArea):
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.verticalScrollBar().valueChanged.connect(self._on_vertical_scroll_changed)
-        self.horizontalScrollBar().valueChanged.connect(lambda _: self._canvas.update())
+        self.horizontalScrollBar().valueChanged.connect(self._on_h_scroll_changed)
 
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setMinimumSize(320, 200)
+
+        # 固定列标题行（浮动于视口顶部，不随滚动消失）
+        self._header_widget: Optional[_HeaderWidget] = None
+
+    def _ensure_header_widget(self) -> None:
+        """创建或更新列标题浮层控件。"""
+        vp = self.viewport()
+        if vp is None:
+            return
+        if self._header_widget is None:
+            self._header_widget = _HeaderWidget(self, vp)
+            self._header_widget.setGeometry(0, 0, vp.width(), _HEADER_HEIGHT)
+            self._header_widget.show()
+        else:
+            self._header_widget.setGeometry(0, 0, vp.width(), _HEADER_HEIGHT)
+        self._header_widget.raise_()
+        self._header_widget.update()
 
     def _on_canvas_context_menu(self, pos: QPoint) -> None:
         self.context_menu_requested.emit(self._canvas.mapToGlobal(pos))
@@ -140,6 +197,7 @@ class HexEditorView(QScrollArea):
     def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
         self.refresh_display()
+        self._ensure_header_widget()
 
     def update_view(self) -> None:
         """仅重绘画布（不重新计算尺寸）。"""
@@ -150,6 +208,7 @@ class HexEditorView(QScrollArea):
         self._recalc_geometry()
         self._resize_canvas()
         self._canvas.update()
+        self._ensure_header_widget()
 
     def set_model(self, model: Optional[BinaryDataModel]) -> None:
         if self._model is not None:
@@ -320,12 +379,31 @@ class HexEditorView(QScrollArea):
         digits = self._digits_for_page_offset()
         return self._fm.horizontalAdvance("0" * digits) + 2
 
-    def _hex_cell_pitch(self) -> int:
-        """单字节 Hex 区宽度（含两字符与字间略增间距）。"""
+    def _hex_cell_pitch(self, col: int) -> int:
+        """单字节 Hex 区宽度（含两字符与字间略增间距，4 字节组间留空）。"""
         cw = self._fm.horizontalAdvance("0")
         sp = self._fm.horizontalAdvance(" ")
         extra = max(2, sp // 2)
-        return 2 * cw + sp + extra
+        pitch = 2 * cw + sp + extra
+        if col > 0 and col % 4 == 0:
+            pitch += _GROUP_GAP
+        return pitch
+
+    def _hex_total_width(self, bpl: int) -> int:
+        """计算给定每行字节数下 Hex 区的总像素宽度（含分组间距）。"""
+        cw = self._fm.horizontalAdvance("0")
+        sp = self._fm.horizontalAdvance(" ")
+        extra = max(2, sp // 2)
+        cell = 2 * cw + sp + extra
+        groups = max(0, (bpl - 1) // 4)
+        return bpl * cell + groups * _GROUP_GAP
+
+    def _x_hex_for_col(self, col: int) -> int:
+        """计算第 col 列字节的 Hex 绘制 x 坐标（逐列累加以处理分组间距）。"""
+        x = self._hex_draw_left
+        for c in range(col):
+            x += self._hex_cell_pitch(c)
+        return x
 
     def _content_width_for_bpl(self, bpl: int) -> int:
         """给定每行字节数，计算整行最小宽度（ASCII 右对齐时的紧凑布局，用于自适应视口）。"""
@@ -335,8 +413,7 @@ class HexEditorView(QScrollArea):
         else:
             addr_w = self._addr_column_width_for_bpl(bpl)
         cw = self._fm.horizontalAdvance("0")
-        hex_cell = self._hex_cell_pitch()
-        hex_w = bpl * hex_cell
+        hex_w = self._hex_total_width(bpl)
         gap_after_addr = self._fm.horizontalAdvance("  ")
         ascii_w = bpl * cw
         x0 = self._margin_x
@@ -345,12 +422,14 @@ class HexEditorView(QScrollArea):
         return hex_area_left + hex_w + min_gap_hex_ascii + ascii_w + self._margin_x
 
     def _fit_bytes_per_line_to_viewport(self) -> None:
-        """视口宽度足够时用 16 字节/行，否则 8 字节/行（过窄时仍为 8 并出现横向滚动）。"""
+        """视口宽度自适应：16 > 8 > 4 字节/行。"""
         vw = max(1, self.viewport().width() - 4)
         if self._content_width_for_bpl(16) <= vw:
             best = 16
-        else:
+        elif self._content_width_for_bpl(8) <= vw:
             best = 8
+        else:
+            best = 4
         if self._bytes_per_line != best:
             self._bytes_per_line = best
 
@@ -361,8 +440,7 @@ class HexEditorView(QScrollArea):
             return
         addr_w = self._addr_column_width_for_bpl(self._bytes_per_line)
         cw = self._fm.horizontalAdvance("0")
-        hex_cell = self._hex_cell_pitch()
-        hex_w = self._bytes_per_line * hex_cell
+        hex_w = self._hex_total_width(self._bytes_per_line)
         ascii_w = self._bytes_per_line * cw
         x0 = self._margin_x
         gap_after_addr = self._fm.horizontalAdvance("  ")
@@ -381,19 +459,18 @@ class HexEditorView(QScrollArea):
         if self._model is None:
             self._paint_width = max(self._min_content_width, vpw)
             self._hex_draw_left = 0
-            h = self._row_height
+            h = self._row_height + _HEADER_HEIGHT
         else:
             self._paint_width = max(self._min_content_width, vpw)
             # ASCII 区紧贴画布右缘，中间 Hex 与 ASCII 之间留白随窗口变宽
             self._ascii_area_left = self._paint_width - self._margin_x - ascii_w
-            hex_cell = self._hex_cell_pitch()
-            hex_w = self._bytes_per_line * hex_cell
+            hex_w = self._hex_total_width(self._bytes_per_line)
             mid = self._ascii_area_left - self._hex_area_left
             self._hex_draw_left = self._hex_area_left + max(0, (mid - hex_w) // 2)
             n = len(self._model)
             total_rows = max(1, (n + self._bytes_per_line - 1) // self._bytes_per_line)
-            h = total_rows * self._row_height
-        h = max(self._row_height, h)
+            h = total_rows * self._row_height + _HEADER_HEIGHT
+        h = max(self._row_height + _HEADER_HEIGHT, h)
         h = min(h, _QT_WIDGET_MAX_PX)
         w = min(max(self._paint_width, 1), _QT_WIDGET_MAX_PX)
         self._canvas.setFixedSize(w, h)
@@ -404,12 +481,18 @@ class HexEditorView(QScrollArea):
         self._recalc_geometry()
         self._resize_canvas()
         self._canvas.update()
+        self._ensure_header_widget()
+
+    def _on_h_scroll_changed(self, value: int) -> None:
+        self._canvas.update()
+        if self._header_widget is not None:
+            self._header_widget.update()
 
     def _ensure_cursor_visible(self) -> None:
         if self._model is None:
             return
         row = self._cursor_pos // self._bytes_per_line
-        y = row * self._row_height
+        y = _HEADER_HEIGHT + row * self._row_height
         self.ensureVisible(0, y, 1, self._row_height)
 
     def _row_text_color(self, palette: QPalette, row: int) -> QColor:
@@ -445,16 +528,25 @@ class HexEditorView(QScrollArea):
 
         total = len(self._model)
         clip = event.rect()
-        first_row = max(0, clip.top() // self._row_height)
-        last_row = clip.bottom() // self._row_height + 1
+        first_row = max(0, (clip.top() - _HEADER_HEIGHT) // self._row_height)
+        last_row = (clip.bottom() - _HEADER_HEIGHT) // self._row_height + 1
         sel_lo, sel_hi = self.selection_range()
 
         cw = self._fm.horizontalAdvance("0")
-        hex_cell = self._hex_cell_pitch()
-        cell_w = hex_cell + 4
+        sep_color = QColor(SURFACE_LIGHT)
+        cursor_row = self._cursor_pos // self._bytes_per_line if total > 0 else -1
+        cursor_row_alpha = QColor(theme_color("cursor"))
+        cursor_row_alpha.setAlpha(15)
 
-        for row in range(first_row, last_row + 1):
-            y_base = row * self._row_height
+        # ── Vertical separators ────────────────────────────────────────
+        addr_w = self._addr_column_width_for_bpl(self._bytes_per_line)
+        sep1_x = self._margin_x + addr_w + self._fm.horizontalAdvance(" ")
+        sep2_x = self._ascii_area_left - self._fm.horizontalAdvance(" ")
+        p.drawLine(int(sep1_x), 0, int(sep1_x), self._canvas.height())
+        p.drawLine(int(sep2_x), 0, int(sep2_x), self._canvas.height())
+
+        for row in range(max(0, first_row), last_row + 1):
+            y_base = _HEADER_HEIGHT + row * self._row_height
             base = row * self._bytes_per_line
             if base >= total and total > 0:
                 break
@@ -463,6 +555,10 @@ class HexEditorView(QScrollArea):
                 p.fillRect(0, y_base, self._paint_width, self._row_height, alt)
             else:
                 p.fillRect(0, y_base, self._paint_width, self._row_height, bg)
+
+            # Cursor row subtle highlight
+            if row == cursor_row:
+                p.fillRect(0, y_base, self._paint_width, self._row_height, cursor_row_alpha)
 
             addr = self._addr_line_text(base)
             row_fg = self._row_text_color(palette, row)
@@ -474,8 +570,9 @@ class HexEditorView(QScrollArea):
                 if idx >= total:
                     break
                 b = self._model.read_byte(idx)
-                x_hex = self._hex_draw_left + col * hex_cell
+                x_hex = self._x_hex_for_col(col)
                 ax = self._ascii_area_left + col * cw
+                cell_w = self._hex_cell_pitch(col) + 4
 
                 in_struct = False
                 if self._struct_range is not None:
@@ -544,44 +641,60 @@ class HexEditorView(QScrollArea):
                 p.drawText(ax, y_base + self._fm.ascent() + 2, ch)
 
         if total == 0:
-            x_hex = self._hex_draw_left
+            x_hex = self._x_hex_for_col(0)
             vx = x_hex + (self._nibble * cw)
             p.setPen(theme_color("cursor"))
-            p.drawLine(int(vx), 2, int(vx), self._row_height - 2)
+            p.drawLine(int(vx), _HEADER_HEIGHT + 2, int(vx), _HEADER_HEIGHT + self._row_height - 2)
         elif self._cursor_pos < total:
             cr = self._cursor_pos // self._bytes_per_line
             cc = self._cursor_pos % self._bytes_per_line
-            cy = cr * self._row_height
-            x_hex = self._hex_draw_left + cc * hex_cell
+            cy = _HEADER_HEIGHT + cr * self._row_height
+            x_hex = self._x_hex_for_col(cc)
             vx = x_hex + (self._nibble * cw)
             p.setPen(theme_color("cursor"))
-            p.drawLine(int(vx), cy + 2, int(vx), cy + self._row_height - 2)
+            p.drawLine(int(vx), int(cy) + 2, int(vx), int(cy + self._row_height - 2))
 
     def _byte_at_point(self, pos: QPoint) -> tuple[str, int]:
         if self._model is None:
             return ("", -1)
         x, y = pos.x(), pos.y()
-        if y < 0:
+        if y < _HEADER_HEIGHT:
             return ("", -1)
-        row = y // self._row_height
+        row = (y - _HEADER_HEIGHT) // self._row_height
         total = len(self._model)
         base = row * self._bytes_per_line
         if base >= total:
             return ("", -1)
 
         cw = self._fm.horizontalAdvance("0")
-        hex_cell = self._hex_cell_pitch()
 
-        if x >= self._hex_draw_left and x < self._hex_draw_left + self._bytes_per_line * hex_cell:
-            rel = (x - self._hex_draw_left) / hex_cell
-            col = int(rel)
-            col = max(0, min(self._bytes_per_line - 1, col))
-            idx = base + col
-            if idx >= total:
-                idx = total - 1
-            frac = (x - self._hex_draw_left) % hex_cell
-            nibble = 0 if frac < cw else 1
-            return ("hex", idx)
+        # Use cumulative x positions to find the column
+        col = -1
+        for c in range(self._bytes_per_line):
+            xl = self._x_hex_for_col(c)
+            xr = xl + self._hex_cell_pitch(c)
+            if xl <= x < xr:
+                col = c
+                break
+        if col < 0:
+            # Check ASCII area
+            ax_start = self._ascii_area_left
+            ax_end = ax_start + self._bytes_per_line * cw
+            if ax_start <= x < ax_end:
+                col = (x - ax_start) // cw
+                col = max(0, min(self._bytes_per_line - 1, col))
+                idx = base + col
+                if idx >= total:
+                    idx = total - 1
+                return ("ascii", idx)
+            return ("", -1)
+        idx = base + col
+        if idx >= total:
+            idx = total - 1
+        x_hex = self._x_hex_for_col(col)
+        frac = x - x_hex
+        nibble = 0 if frac < cw else 1
+        return ("hex", idx)
 
         if x >= self._ascii_area_left and x < self._ascii_area_left + self._bytes_per_line * cw:
             col = int((x - self._ascii_area_left) / cw)
@@ -611,13 +724,11 @@ class HexEditorView(QScrollArea):
                 self._cursor_pos = idx
                 self._anchor = None
             if area == "hex":
-                rel = event.position().x() - self._hex_draw_left
                 cw = self._fm.horizontalAdvance("0")
-                hex_cell = self._hex_cell_pitch()
-                col = int(rel / hex_cell)
-                col = max(0, min(self._bytes_per_line - 1, col))
-                frac = rel - col * hex_cell
-                self._nibble = 0 if frac < cw else 1
+                col = idx % self._bytes_per_line
+                x_hex = self._x_hex_for_col(col)
+                rel = event.position().x() - x_hex
+                self._nibble = 0 if rel < cw else 1
             else:
                 self._nibble = 0
             self._ensure_cursor_visible()

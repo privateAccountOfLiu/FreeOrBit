@@ -58,3 +58,41 @@ def python_frida_version() -> str | None:
         return str(getattr(frida, "__version__", "?"))
     except ImportError:
         return None
+
+
+# ── Frida 附加参数持久化 ──────────────────────────────────────────────
+
+import json
+
+_FRIDA_PARAMS_KEY = "frida/params"
+
+
+def load_frida_params() -> dict:
+    """从 QSettings 加载上次的 Frida 附加参数（JSON 格式）。"""
+    raw = QSettings().value(_FRIDA_PARAMS_KEY, "")
+    if isinstance(raw, str) and raw.strip():
+        try:
+            return json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            pass
+    return {}
+
+
+def save_frida_params(mode: str, device_id: str, il2cpp: bool,
+                      spawn_args: str, realm: str, persist: int,
+                      cwd: str, env_text: str, stdio: str, aux_text: str,
+                      target: str = "") -> None:
+    """将 Frida 附加参数持久化到 QSettings（JSON 格式）。"""
+    QSettings().setValue(_FRIDA_PARAMS_KEY, json.dumps({
+        "mode": mode,
+        "device_id": device_id,
+        "il2cpp": il2cpp,
+        "spawn_args": spawn_args,
+        "realm": realm,
+        "persist": persist,
+        "cwd": cwd,
+        "env": env_text,
+        "stdio": stdio,
+        "aux": aux_text,
+        "target": target,
+    }, ensure_ascii=False))

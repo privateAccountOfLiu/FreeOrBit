@@ -157,6 +157,20 @@ class MainWindow(QMainWindow):
         self._act_redo.triggered.connect(self._redo)
         self._menu_edit.addAction(self._act_redo)
 
+        self._menu_edit.addSeparator()
+
+        self._act_copy = QAction(self)
+        self._act_copy.setShortcut(QKeySequence.Copy)
+        self._act_copy.triggered.connect(self._copy)
+        self._menu_edit.addAction(self._act_copy)
+
+        self._act_paste = QAction(self)
+        self._act_paste.setShortcut(QKeySequence.Paste)
+        self._act_paste.triggered.connect(self._paste)
+        self._menu_edit.addAction(self._act_paste)
+
+        self._menu_edit.addSeparator()
+
         self._act_locate_struct = QAction(self)
         self._act_locate_struct.setShortcut(QKeySequence("Ctrl+J"))
         self._act_locate_struct.triggered.connect(self._locate_struct_from_cursor)
@@ -304,6 +318,8 @@ class MainWindow(QMainWindow):
         self._menu_edit.setTitle(tr("menu.edit"))
         self._act_undo.setText(tr("action.undo"))
         self._act_redo.setText(tr("action.redo"))
+        self._act_copy.setText(tr("action.copy"))
+        self._act_paste.setText(tr("action.paste"))
         self._act_locate_struct.setText(tr("action.locate_struct"))
         self._act_refresh.setText(tr("action.refresh"))
         self._menu_tools.setTitle(tr("menu.tools"))
@@ -837,6 +853,16 @@ class MainWindow(QMainWindow):
         doc = self.current_editor()
         if doc:
             doc.undo_stack().redo()
+
+    def _copy(self) -> None:
+        doc = self.current_editor()
+        if doc:
+            doc._copy()
+
+    def _paste(self) -> None:
+        doc = self.current_editor()
+        if doc:
+            doc._paste()
 
     def _refresh_status(self, doc: DocumentEditor) -> None:
         if self.current_editor() is not doc:

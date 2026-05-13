@@ -21,7 +21,7 @@ except ImportError:  # pragma: no cover
     _HAS_QTCHARTS = False
 
 from PySide6.QtCore import QObject, QPointF, QRectF, QSize, Qt, QMargins, QThread, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPalette, QPen
+from PySide6.QtGui import QColor, QFont, QLinearGradient, QPainter, QPainterPath, QPalette, QPen
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -48,7 +48,7 @@ from PySide6.QtWidgets import (
 )
 
 from freeorbit.i18n import tr
-from freeorbit.theme import theme_color
+from freeorbit.theme import theme_color, SURFACE_LIGHT
 from freeorbit.viewmodel.document_editor import DocumentEditor
 
 # 名称 -> (宽度, struct fmt, 是否浮点)
@@ -304,9 +304,10 @@ class _OffsetBinHistogram(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = self.rect()
-        p.fillRect(rect, self.palette().color(QPalette.ColorRole.Base))
+        bg_col = self.palette().color(QPalette.ColorRole.Base)
+        p.fillRect(rect, bg_col)
         text_col = self.palette().color(QPalette.ColorRole.Text)
-        axis_col = self.palette().color(QPalette.ColorRole.Mid)
+        axis_col = QColor(SURFACE_LIGHT)
 
         if not self._bins:
             p.setPen(text_col)
@@ -319,74 +320,128 @@ class _OffsetBinHistogram(QWidget):
         total_c = float(sum(counts))
         fm = p.fontMetrics()
         y_lab_w = max(fm.horizontalAdvance(str(mx)), fm.horizontalAdvance("0")) + 8
-        margin_l = max(40, y_lab_w)
-        margin_r, margin_t = 12, 20
-        margin_b = 16
+        margin_l = max(44, y_lab_w)
+        margin_r, margin_t = 16, 22
+        margin_b = 24
         plot = rect.adjusted(margin_l, margin_t, -margin_r, -margin_b)
         if plot.width() < 8 or plot.height() < 8:
             return
 
         inner_w = float(plot.width())
-        # 各段水平宽度 ∝ 该箱频数（与表格中各箱命中数一致）；全为 0 时均分
+        plot_bottom = float(plot.bottom())
+        plot_left = float(plot.left())
+        plot_right = float(plot.right())
+        plot_h = float(plot.height())
+
+        # 各段水平宽度 ∝ 频数；全为 0 时均分
         if total_c <= 0:
             seg_w = [inner_w / n] * n
         else:
             seg_w = [inner_w * (c / total_c) for c in counts]
 
-        p.setPen(axis_col)
+        # ── Y 轴刻度与水平参考线 ──────────────────────────────────
         p.setFont(QFont())
+        p.setPen(axis_col)
+        # 计算合理的 Y 轴刻度步长
+        tick_step = 1
+        if mx > 100:
+            tick_step = max(1, (mx + 9) // 10)
+            while mx / tick_step > 10:
+                tick_step *= 2
+        elif mx > 10:
+            tick_step = max(1, mx // 5)
+
+        t = 0
+        while t <= mx:
+            ty = int(plot_bottom - (t / mx) * plot_h) if mx else int(plot_bottom)
+            p.setPen(axis_col)
+            p.drawLine(int(plot_left), int(ty), int(plot_right), int(ty))
+            lab = str(t)
+            p.setPen(text_col)
+            p.drawText(
+                int(plot_left) - fm.horizontalAdvance(lab) - 6,
+                int(ty) + fm.ascent() // 2 - 1,
+                lab,
+            )
+            t += tick_step
+
+        # ── X 轴基线与标签 ────────────────────────────────────────
+        p.setPen(text_col)
+        p.drawLine(int(plot_left), int(plot_bottom), int(plot_right), int(plot_bottom))
+        x_title = tr("orf.chart_y_freq")
+        tw = fm.horizontalAdvance(x_title)
+        p.drawText(
+            int(rect.center().x() - tw // 2),
+            int(plot_bottom) + fm.ascent() + 14,
+            x_title,
+        )
+        # Y 轴标题（旋转）
         y_title = tr("orf.chart_y_freq")
         p.save()
-        p.translate(
-            10,
-            margin_t + plot.height() // 2 + fm.horizontalAdvance(y_title) // 2,
-        )
+        p.translate(14, int(margin_t + plot_h // 2 + fm.horizontalAdvance(y_title) // 2))
         p.rotate(-90)
         p.drawText(0, 0, y_title)
         p.restore()
 
-        plot_left = plot.left()
-        plot_right = plot.right()
-        for t in (0, mx):
-            ty = plot.bottom() - int((t / mx) * plot.height()) if mx else plot.bottom()
-            p.drawLine(plot_left, ty, plot_left - 4, ty)
-            lab = str(t)
-            p.drawText(
-                plot_left - fm.horizontalAdvance(lab) - 6,
-                ty + fm.ascent() // 2 - fm.height() // 2,
-                lab,
-            )
+        # ── 计算柱形几何 ──────────────────────────────────────────
+        bar_gap = max(1.0, inner_w * 0.08 / n) if n > 1 else 2.0
+        total_gaps = bar_gap * (n - 1) if n > 1 else 0.0
+        bar_w = max(3.0, (inner_w - total_gaps) / n) if n > 0 else inner_w
+        if n == 1:
+            bar_w = min(bar_w, inner_w * 0.6)
+            bar_gap = 0
 
-        p.drawLine(plot_left, plot.bottom(), plot_right, plot.bottom())
+        # 柱色渐变：从主题色到稍淡
+        base_fill = QColor(theme_color("chart_bar"))
+        highlight_fill = QColor(base_fill)
+        highlight_fill.setAlpha(180)
+        base_fill.setAlpha(140)
+        border_col = QColor(base_fill.darker(130))
+        border_col.setAlpha(180)
 
-        # 折线顶点：每段水平中心、高度 ∝ 频数
-        pts: list[QPointF] = []
-        x = float(plot_left)
+        # 顶部数值字号
+        val_font = QFont(p.font())
+        val_font.setPointSize(max(7, p.font().pointSize() - 1))
+
+        x = plot_left
         for i, c in enumerate(counts):
-            w = seg_w[i]
-            cx = x + w * 0.5
-            yv = plot.bottom() - (plot.height() * (c / mx) if mx else 0.0)
-            pts.append(QPointF(cx, yv))
-            x += w
+            if n > 1:
+                w = seg_w[i] if total_c > 0 else bar_w
+                bx = x + bar_gap / 2.0
+                bw = bar_w if total_c <= 0 else max(3.0, w - bar_gap)
+            else:
+                bx = plot_left + (inner_w - bar_w) / 2.0
+                bw = bar_w
 
-        line_col = theme_color("chart_line")
-        fill_col = QColor(theme_color("chart_fill"))
-        fill_col.setAlpha(55)
-        if len(pts) == 1:
-            p.setPen(QPen(line_col, 2))
-            p.drawEllipse(pts[0], 3, 3)
-        elif len(pts) >= 2:
-            path = QPainterPath()
-            path.moveTo(pts[0])
-            for q in pts[1:]:
-                path.lineTo(q)
-            p.setPen(QPen(line_col, 2))
-            p.drawPath(path)
-            fill = QPainterPath(path)
-            fill.lineTo(QPointF(pts[-1].x(), float(plot.bottom())))
-            fill.lineTo(QPointF(pts[0].x(), float(plot.bottom())))
-            fill.closeSubpath()
-            p.fillPath(fill, fill_col)
+            bar_h = (c / mx) * plot_h if mx > 0 else 0.0
+            by = plot_bottom - bar_h
+
+            if bar_h > 1.0:
+                # 渐变填充
+                grad = QLinearGradient(float(bx), float(by), float(bx), float(plot_bottom))
+                grad.setColorAt(0.0, highlight_fill)
+                grad.setColorAt(1.0, base_fill)
+                p.setBrush(grad)
+                p.setPen(border_col)
+                r = QRectF(float(bx), float(by), float(bw), float(bar_h))
+                p.drawRoundedRect(r, 2.0, 2.0)
+
+                # 柱顶数值标签
+                if c > 0 and bar_h > 14:
+                    p.setFont(val_font)
+                    p.setPen(text_col)
+                    vl = str(c)
+                    vw = fm.horizontalAdvance(vl)
+                    p.drawText(
+                        int(bx + bw / 2.0 - vw / 2.0),
+                        int(by) - 3,
+                        vl,
+                    )
+
+            if total_c > 0:
+                x += seg_w[i]
+            else:
+                x += bar_w + bar_gap
 
 
 if _HAS_QTCHARTS:
@@ -450,7 +505,10 @@ if _HAS_QTCHARTS:
             p.setClipRect(clip.toRect())
             bar_fill = QColor(theme_color("chart_bar"))
             bar_fill.setAlpha(140)
-            border = theme_color("chart_border")
+            highlight_fill = QColor(theme_color("chart_bar"))
+            highlight_fill.setAlpha(200)
+            border = QColor(bar_fill.darker(140))
+            border.setAlpha(180)
             pen = QPen(border, 1)
             for i, (_, _, cnt) in enumerate(self._bins_data):
                 fc = float(cnt)
@@ -459,9 +517,13 @@ if _HAS_QTCHARTS:
                 r = self._bar_rect_for_index(i, fc)
                 if r.isNull() or r.width() <= 0 or r.height() <= 0:
                     continue
-                p.setBrush(bar_fill)
+                # 渐变填充
+                grad = QLinearGradient(r.topLeft(), r.bottomLeft())
+                grad.setColorAt(0.0, highlight_fill)
+                grad.setColorAt(1.0, bar_fill)
+                p.setBrush(grad)
                 p.setPen(pen)
-                p.drawRect(r)
+                p.drawRoundedRect(r, 2.0, 2.0)
 
         def set_bins(self, bins: list[tuple[int, int, int]]) -> None:
             bins = _trim_bins_for_display(bins)
