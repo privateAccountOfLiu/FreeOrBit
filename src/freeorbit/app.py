@@ -80,7 +80,17 @@ def main() -> int:
     _install_excepthook()
 
     splash.set_progress(72)
+    # 从命令行参数提取待打开的文件路径（过滤 Qt 风格参数如 -style、-platform）
+    pending_files: list[str] = []
+    for a in sys.argv[1:]:
+        if a.startswith("-") or a.startswith("--"):
+            continue
+        p = Path(a)
+        if p.is_file():
+            pending_files.append(str(p.resolve()))
     win = MainWindow()
+    if pending_files:
+        win.open_files(pending_files)
     splash.set_progress(100)
     app.processEvents()
     splash.finish(win)

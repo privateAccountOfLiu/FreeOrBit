@@ -223,6 +223,11 @@ class MainWindow(QMainWindow):
         self._act_android_debug.triggered.connect(self._open_android_debug)
         self._menu_tools.addAction(self._act_android_debug)
 
+        self._menu_tools.addSeparator()
+        self._act_file_assoc = QAction(self)
+        self._act_file_assoc.triggered.connect(self._toggle_file_association)
+        self._menu_tools.addAction(self._act_file_assoc)
+
         self._menu_win = mb.addMenu("")
         self._act_show_search = QAction(self)
         self._act_show_search.triggered.connect(
@@ -333,6 +338,7 @@ class MainWindow(QMainWindow):
         self._act_disasm.setText(tr("action.disasm_panel"))
         self._act_orf.setText(tr("action.orf"))
         self._act_android_debug.setText(tr("action.android_debug"))
+        self._update_file_assoc_action()
         self._menu_win.setTitle(tr("menu.window"))
         self._act_show_search.setText(tr("action.show_search"))
         self._act_show_struct.setText(tr("action.show_struct"))
@@ -385,6 +391,33 @@ class MainWindow(QMainWindow):
         self._android_debug_window.show()
         self._android_debug_window.raise_()
         self._android_debug_window.activateWindow()
+
+    def _toggle_file_association(self) -> None:
+        """注册/取消 Windows 右键菜单 "Open with FreeOrBit"。"""
+        from freeorbit.platform.win_file_assoc import register, unregister, is_registered
+
+        if is_registered():
+            err = unregister()
+            if err:
+                QMessageBox.warning(self, tr("action.file_assoc"), f"取消注册失败：{err}")
+            else:
+                QMessageBox.information(self, tr("action.file_assoc"), tr("action.file_assoc_removed"))
+        else:
+            err = register()
+            if err:
+                QMessageBox.warning(self, tr("action.file_assoc"), f"注册失败：{err}")
+            else:
+                QMessageBox.information(self, tr("action.file_assoc"), tr("action.file_assoc_added"))
+        self._update_file_assoc_action()
+
+    def _update_file_assoc_action(self) -> None:
+        """更新文件关联菜单项文字以反映当前注册状态。"""
+        from freeorbit.platform.win_file_assoc import is_registered
+
+        if is_registered():
+            self._act_file_assoc.setText(tr("action.file_assoc_remove"))
+        else:
+            self._act_file_assoc.setText(tr("action.file_assoc_add"))
 
     def _apply_qtawesome_icons(self, actions: list[tuple[QAction, str]]) -> None:
         """菜单图标：Font Awesome Free，经 QtAwesome 渲染（未安装则跳过）。"""
@@ -634,6 +667,30 @@ class MainWindow(QMainWindow):
         )
         if not path:
             return
+        self._open_file_path(path)
+
+    def open_files(self, paths: list[str]) -> None:
+        """从命令行参数批量打开文件（双击文件图标关联启动时调用）。"""
+        first = True
+        for p in paths:
+            if first:
+                # 首个文件复用当前空白标签（若存在且未被修改）
+                doc = self.current_editor()
+                if doc is not None and not doc.model().modified and len(doc.model()) == 0:
+                    try:
+                        doc.model().load_file(p)
+                        self._update_title(doc)
+                        doc.hex_view().refresh_display()
+                        self._apply_auto_template_for_open(doc)
+                        first = False
+                        continue
+                    except OSError:
+                        pass
+                first = False
+            self._open_file_path(p)
+
+    def _open_file_path(self, path: str) -> None:
+        """打开单个文件到新标签页。"""
         doc = DocumentEditor(self._tabs)
         try:
             doc.model().load_file(path)
